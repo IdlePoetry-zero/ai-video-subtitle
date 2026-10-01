@@ -1,0 +1,212 @@
+{
+  "recall": 1.0,
+  "false_events": 0,
+  "cer": 0.0029069767441860465,
+  "boundary_within_200ms": 1.0,
+  "passed": true,
+  "rows": [
+    {
+      "expected": {
+        "start": 2,
+        "end": 5,
+        "text": "Welcome to the subtitle studio."
+      },
+      "actual": {
+        "start": 1.99,
+        "end": 5.03,
+        "source": "Welcome to the subtitle studio."
+      },
+      "start_error": 0.010000000000000009,
+      "end_error": 0.03000000000000025,
+      "errors": 0
+    },
+    {
+      "expected": {
+        "start": 7,
+        "end": 10,
+        "text": "Today we will translate a video."
+      },
+      "actual": {
+        "start": 6.95,
+        "end": 9.95,
+        "source": "Today we will translate a video."
+      },
+      "start_error": 0.04999999999999982,
+      "end_error": 0.05000000000000071,
+      "errors": 0
+    },
+    {
+      "expected": {
+        "start": 12,
+        "end": 15,
+        "text": "We need 12 samples, not 20."
+      },
+      "actual": {
+        "start": 11.99,
+        "end": 14.99,
+        "source": "We need 12 samples, not 20."
+      },
+      "start_error": 0.009999999999999787,
+      "end_error": 0.009999999999999787,
+      "errors": 0
+    },
+    {
+      "expected": {
+        "start": 17,
+        "end": 20,
+        "text": "Keep the original timing."
+      },
+      "actual": {
+        "start": 17.03,
+        "end": 20.03,
+        "source": "Keep the original timing"
+      },
+      "start_error": 0.030000000000001137,
+      "end_error": 0.030000000000001137,
+      "errors": 1
+    },
+    {
+      "expected": {
+        "start": 21.2,
+        "end": 21.7,
+        "text": "This is a short caption."
+      },
+      "actual": {
+        "start": 21.23,
+        "end": 21.71,
+        "source": "This is a short caption."
+      },
+      "start_error": 0.030000000000001137,
+      "end_error": 0.010000000000001563,
+      "errors": 0
+    },
+    {
+      "expected": {
+        "start": 23,
+        "end": 25,
+        "text": "Hello again."
+      },
+      "actual": {
+        "start": 23.15,
+        "end": 25.07,
+        "source": "Hello again."
+      },
+      "start_error": 0.14999999999999858,
+      "end_error": 0.07000000000000028,
+      "errors": 0
+    },
+    {
+      "expected": {
+        "start": 27,
+        "end": 29,
+        "text": "Hello again."
+      },
+      "actual": {
+        "start": 26.99,
+        "end": 29.15,
+        "source": "Hello again."
+      },
+      "start_error": 0.010000000000001563,
+      "end_error": 0.14999999999999858,
+      "errors": 0
+    },
+    {
+      "expected": {
+        "start": 31,
+        "end": 35,
+        "text": "Read both lines.\nThey belong together."
+      },
+      "actual": {
+        "start": 30.95,
+        "end": 35.03,
+        "source": "Read both lines.\nThey belong together."
+      },
+      "start_error": 0.05000000000000071,
+      "end_error": 0.030000000000001137,
+      "errors": 0
+    },
+    {
+      "expected": {
+        "start": 37,
+        "end": 40,
+        "text": "The background keeps moving."
+      },
+      "actual": {
+        "start": 36.95,
+        "end": 39.95,
+        "source": "The background keeps moving."
+      },
+      "start_error": 0.04999999999999716,
+      "end_error": 0.04999999999999716,
+      "errors": 0
+    },
+    {
+      "expected": {
+        "start": 42,
+        "end": 45,
+        "text": "Do not overwrite my edits."
+      },
+      "actual": {
+        "start": 41.99,
+        "end": 44.99,
+        "source": "Do not overwrite my edits."
+      },
+      "start_error": 0.00999999999999801,
+      "end_error": 0.00999999999999801,
+      "errors": 0
+    },
+    {
+      "expected": {
+        "start": 46,
+        "end": 49,
+        "text": "Save the project before exporting."
+      },
+      "actual": {
+        "start": 45.95,
+        "end": 48.95,
+        "source": "Save the project before exporting."
+      },
+      "start_error": 0.04999999999999716,
+      "end_error": 0.04999999999999716,
+      "errors": 0
+    },
+    {
+      "expected": {
+        "start": 51,
+        "end": 54,
+        "text": "Check the sound and the picture."
+      },
+      "actual": {
+        "start": 50.99,
+        "end": 53.99,
+        "source": "Check the sound and the picture."
+      },
+      "start_error": 0.00999999999999801,
+      "end_error": 0.00999999999999801,
+      "errors": 0
+    },
+    {
+      "expected": {
+        "start": 56,
+        "end": 59,
+        "text": "Thank you for watching."
+      },
+      "actual": {
+        "start": 56.03,
+        "end": 59.03,
+        "source": "Thank you for watching."
+      },
+      "start_error": 0.030000000000001137,
+      "end_error": 0.030000000000001137,
+      "errors": 0
+    }
+  ],
+  "scan": {
+    "key": "dcd7e48a4a2d0d6d42bd5fc86e89c1fbab32fcf8a4362fa80d83896cb1cec928",
+    "cursor": 60,
+    "active": null,
+    "status": "complete",
+    "calls": 259,
+    "elapsed": 16.58913629176095
+  }
+}

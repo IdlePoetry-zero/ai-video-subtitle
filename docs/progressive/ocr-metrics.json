@@ -1,0 +1,244 @@
+{
+  "recall": 1.0,
+  "false_events": 0,
+  "cer": 0.006622516556291391,
+  "boundary_within_200ms": 1.0,
+  "passed": true,
+  "rows": [
+    {
+      "expected": {
+        "start": 1.0,
+        "end": 6.0,
+        "text": "Welcome to the subtitle studio.",
+        "complete_time": 3.4,
+        "strategy": "char"
+      },
+      "actual": {
+        "start": 1.08,
+        "end": 6,
+        "source": "Welcome to the subtitle studio."
+      },
+      "start_error": 0.08000000000000007,
+      "end_error": 0.0,
+      "errors": 0,
+      "complete_time": 3.4,
+      "complete_error": 0.0,
+      "full_text_has_pixel_evidence": true
+    },
+    {
+      "expected": {
+        "start": 7.0,
+        "end": 12.0,
+        "text": "Today we will translate a video.",
+        "complete_time": 9.4,
+        "strategy": "word"
+      },
+      "actual": {
+        "start": 6.96,
+        "end": 12,
+        "source": "Today we will translate a video."
+      },
+      "start_error": 0.040000000000000036,
+      "end_error": 0.0,
+      "errors": 0,
+      "complete_time": 9.4,
+      "complete_error": 0.0,
+      "full_text_has_pixel_evidence": true
+    },
+    {
+      "expected": {
+        "start": 13.0,
+        "end": 19.0,
+        "text": "We need 12 samples, not 20.",
+        "complete_time": 16.0,
+        "strategy": "pause"
+      },
+      "actual": {
+        "start": 13.12,
+        "end": 18.96,
+        "source": "We need 12 samples, not 20."
+      },
+      "start_error": 0.11999999999999922,
+      "end_error": 0.03999999999999915,
+      "errors": 0,
+      "complete_time": 16.04,
+      "complete_error": 0.03999999999999915,
+      "full_text_has_pixel_evidence": true
+    },
+    {
+      "expected": {
+        "start": 20.0,
+        "end": 25.0,
+        "text": "Read both lines.\nThey belong together.",
+        "complete_time": 22.400000000000002,
+        "strategy": "word"
+      },
+      "actual": {
+        "start": 20.08,
+        "end": 24.96,
+        "source": "Read both lines.\nThey belong together."
+      },
+      "start_error": 0.0799999999999983,
+      "end_error": 0.03999999999999915,
+      "errors": 0,
+      "complete_time": 22.44,
+      "complete_error": 0.03999999999999915,
+      "full_text_has_pixel_evidence": true
+    },
+    {
+      "expected": {
+        "start": 26.0,
+        "end": 30.0,
+        "text": "Keep the original timing.",
+        "complete_time": 28.400000000000002,
+        "strategy": "char"
+      },
+      "actual": {
+        "start": 26.08,
+        "end": 30,
+        "source": "Keep the original timing."
+      },
+      "start_error": 0.0799999999999983,
+      "end_error": 0.0,
+      "errors": 0,
+      "complete_time": 28.36,
+      "complete_error": 0.0400000000000027,
+      "full_text_has_pixel_evidence": true
+    },
+    {
+      "expected": {
+        "start": 30.0,
+        "end": 34.0,
+        "text": "Check the sound and the picture.",
+        "complete_time": 32.4,
+        "strategy": "word"
+      },
+      "actual": {
+        "start": 30,
+        "end": 34,
+        "source": "Check the sound and the picture."
+      },
+      "start_error": 0.0,
+      "end_error": 0.0,
+      "errors": 0,
+      "complete_time": 32.44,
+      "complete_error": 0.03999999999999915,
+      "full_text_has_pixel_evidence": true
+    },
+    {
+      "expected": {
+        "start": 35.0,
+        "end": 39.0,
+        "text": "Hello again.",
+        "complete_time": 37.4,
+        "strategy": "word"
+      },
+      "actual": {
+        "start": 34.96,
+        "end": 38.96,
+        "source": "Hello again."
+      },
+      "start_error": 0.03999999999999915,
+      "end_error": 0.03999999999999915,
+      "errors": 0,
+      "complete_time": 37.4,
+      "complete_error": 0.0,
+      "full_text_has_pixel_evidence": true
+    },
+    {
+      "expected": {
+        "start": 40.0,
+        "end": 44.0,
+        "text": "Hello again.",
+        "complete_time": 42.4,
+        "strategy": "word"
+      },
+      "actual": {
+        "start": 40.08,
+        "end": 44.08,
+        "source": "Hello again."
+      },
+      "start_error": 0.0799999999999983,
+      "end_error": 0.0799999999999983,
+      "errors": 0,
+      "complete_time": 42.52,
+      "complete_error": 0.12000000000000455,
+      "full_text_has_pixel_evidence": true
+    },
+    {
+      "expected": {
+        "start": 45.0,
+        "end": 49.0,
+        "text": "Save the project before exporting.",
+        "complete_time": 47.4,
+        "strategy": "word"
+      },
+      "actual": {
+        "start": 45.04,
+        "end": 48.96,
+        "source": "Save the project before exporting"
+      },
+      "start_error": 0.03999999999999915,
+      "end_error": 0.03999999999999915,
+      "errors": 1,
+      "complete_time": 47.48,
+      "complete_error": 0.0799999999999983,
+      "full_text_has_pixel_evidence": true
+    },
+    {
+      "expected": {
+        "start": 49.0,
+        "end": 53.0,
+        "text": "Save the project after exporting.",
+        "complete_time": 51.4,
+        "strategy": "word"
+      },
+      "actual": {
+        "start": 48.96,
+        "end": 52.96,
+        "source": "Save the project after exporting"
+      },
+      "start_error": 0.03999999999999915,
+      "end_error": 0.03999999999999915,
+      "errors": 1,
+      "complete_time": 51.4,
+      "complete_error": 0.0,
+      "full_text_has_pixel_evidence": true
+    },
+    {
+      "expected": {
+        "start": 54.0,
+        "end": 59.0,
+        "text": "Do not overwrite my edits.",
+        "complete_time": 56.4,
+        "strategy": "char"
+      },
+      "actual": {
+        "start": 54.08,
+        "end": 58.96,
+        "source": "Do not overwrite my edits."
+      },
+      "start_error": 0.0799999999999983,
+      "end_error": 0.03999999999999915,
+      "errors": 0,
+      "complete_time": 56.36,
+      "complete_error": 0.03999999999999915,
+      "full_text_has_pixel_evidence": true
+    }
+  ],
+  "complete_within_200ms": 1.0,
+  "scan": {
+    "key": "8cd9e50f3f57f45523e222ef3ce3c9fbd820811f690b285d2b86c2ff14f83183",
+    "cursor": 60,
+    "status": "complete",
+    "calls": 380,
+    "tracker": {
+      "active": null,
+      "pending": null,
+      "blank_since": null
+    },
+    "mode": "progressive",
+    "version": "progressive-v2",
+    "elapsed": 19.25748262507841
+  }
+}

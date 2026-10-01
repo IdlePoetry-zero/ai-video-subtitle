@@ -154,6 +154,10 @@ def invoke(method, params):
         first["end"] = second["end"]
         first["cover_intervals"] = first.get("cover_intervals", [[first["original_start"], first["original_end"]]]) + second.get("cover_intervals", [[second["original_start"], second["original_end"]]])
         first.update(manual=True, manual_translation=bool(first["translation"]), translation_status="manual" if first["translation"] else "missing")
+        if first.get("recognition_mode") == "progressive":
+            first.update(manual_time=True, disappeared_at=second.get("disappeared_at", second["end"]),
+                         complete_time=None, complete_supported=False, complete_evidence_text=None)
+            first["growth"] = first.get("growth", []) + second.get("growth", [])
         del cues[index + 1]
         check_cues(cues, p.data["style"], p.data["translation"].get("glossary", ""))
         p.save(history=True)
@@ -166,13 +170,17 @@ def invoke(method, params):
         if not first["start"] + .05 < at < first["end"] - .05:
             raise ValueError("拆分位置需在当前字幕时间内。")
         second = json.loads(json.dumps(first))
-        second.update(id=str(uuid.uuid4()), start=at, manual=True)
-        first.update(end=at, manual=True)
+        second.update(id=str(uuid.uuid4()), start=at, manual=True, manual_time=True)
+        first.update(end=at, manual=True, manual_time=True)
         # Split by visual lines when possible; otherwise user may edit each half.
         for field in ("source", "translation"):
             lines = first[field].splitlines()
             if len(lines) > 1:
                 first[field], second[field] = lines[0], "\n".join(lines[1:])
+        for cue in (first, second):
+            if cue.get("recognition_mode") == "progressive":
+                cue.update(manual_translation=bool(cue["translation"]),
+                           translation_status="manual" if cue["translation"] else "missing")
         cues.insert(index + 1, second)
         check_cues(cues, p.data["style"], p.data["translation"].get("glossary", ""))
         p.save(history=True)

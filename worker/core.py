@@ -221,7 +221,8 @@ class Project:
             raise
         self.data = {"version": 1, "id": str(uuid.uuid4()), "meta": meta, "fingerprint": fingerprint,
                      "fingerprint_version": 1, "roi": [.04, .76, .92, .21], "regions": [], "language": "en-US", "cues": [],
-                     "scan": {}, "style": {"mode": "cover", "fontSize": 36, "background": "#101820", "color": "#ffffff", "padding": 10, "maxCps": 12, "maxChars": 44, "maxLines": 2},
+                     "scan": {}, "recognition_mode": "standard", "recognition_results": {}, "progressive": {"display": "first"},
+                     "style": {"mode": "cover", "fontSize": 36, "background": "#101820", "color": "#ffffff", "padding": 10, "maxCps": 12, "maxChars": 44, "maxLines": 2},
                      "translation": {"provider": "mock", "baseUrl": "http://localhost:11434", "model": "", "glossary": ""},
                      "task": {"stage": "ready", "status": "idle"}, "outputs": []}
         self.save()
@@ -240,6 +241,8 @@ class Project:
         with self.lock:
             result = json.loads(json.dumps(self.data))
         result["directory"] = str(self.directory)
+        result.setdefault("recognition_mode", "standard")
+        result.setdefault("progressive", {"display": "first"})
         result["missing_video"] = bool(result.get("meta") and not Path(result["meta"]["path"]).is_file())
         return result
 
@@ -259,8 +262,12 @@ class Project:
     def update(self, changes):
         with self.lock:
             for key in changes:
-                if key not in ("roi", "regions", "language", "style", "translation"):
+                if key not in ("roi", "regions", "language", "style", "translation", "recognition_mode", "progressive"):
                     raise ValueError("不允许修改该项目字段。")
+            if "recognition_mode" in changes and changes["recognition_mode"] not in ("standard", "progressive"):
+                raise ValueError("字幕识别模式无效。")
+            if "progressive" in changes and (set(changes["progressive"]) != {"display"} or changes["progressive"]["display"] not in ("first", "complete")):
+                raise ValueError("逐步字幕显示时机无效。")
             if "roi" in changes:
                 validate_roi(changes["roi"])
             for region in changes.get("regions", []):
@@ -277,7 +284,19 @@ class Project:
                     value = changes["style"].get(name, {"maxCps":12,"maxChars":44,"maxLines":2}[name])
                     if not isinstance(value, (int, float)) or not limits[0] <= value <= limits[1]:
                         raise ValueError("字幕检查阈值无效。")
+            old_mode = self.data.get("recognition_mode", "standard")
+            new_mode = changes.get("recognition_mode", old_mode)
+            if new_mode != old_mode:
+                results = self.data.setdefault("recognition_results", {})
+                results[old_mode] = json.loads(json.dumps({"cues": self.data["cues"], "scan": self.data["scan"]}))
+                restored = results.pop(new_mode, {"cues": [], "scan": {}})
+                self.data.update(restored)
+                self.data["task"] = {"stage": "ready", "status": "idle"}
             self.data.update(changes)
+            if "progressive" in changes and new_mode == "progressive":
+                for cue in self.data["cues"]:
+                    if cue.get("recognition_mode") == "progressive" and not cue.get("manual_time", cue.get("manual", False)):
+                        cue["start"] = cue.get("complete_time") if changes["progressive"]["display"] == "complete" and cue.get("complete_time") is not None else cue["first_seen"]
             check_cues(self.data["cues"], self.data["style"], self.data["translation"].get("glossary", ""))
             self.save(history=True)
         return self.snapshot()
@@ -294,6 +313,8 @@ class Project:
             cue.update(changes)
             cue["revision"] = cue.get("revision", 0) + 1
             cue["manual"] = True
+            if "start" in changes or "end" in changes:
+                cue["manual_time"] = True
             if "translation" in changes:
                 cue["manual_translation"] = True
                 cue["translation_status"] = "manual"
@@ -316,6 +337,13 @@ def event_to_cue(event):
 
 
 def scan(project, emit=lambda value: None, cancel=None, start=0., end=None, force=False):
+    if project.data.get("recognition_mode", "standard") == "progressive":
+        from worker.progressive import scan_progressive
+        return scan_progressive(project, emit, cancel, start, end, force)
+    return scan_standard(project, emit, cancel, start, end, force)
+
+
+def scan_standard(project, emit=lambda value: None, cancel=None, start=0., end=None, force=False):
     cancel = cancel or threading.Event()
     data = project.data
     meta = probe(data["meta"]["path"])
@@ -490,6 +518,7 @@ MOCK_EXAMPLES = {
     "The background keeps moving.": "背景一直在变化。",
     "Do not overwrite my edits.": "请不要覆盖我的修改。",
     "Save the project before exporting.": "导出之前请保存项目。",
+    "Save the project after exporting.": "导出之后请保存项目。",
     "Check the sound and the picture.": "检查声音和画面。",
     "Thank you for watching.": "感谢观看。",
 }

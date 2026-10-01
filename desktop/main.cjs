@@ -6,6 +6,10 @@ const readline = require('node:readline');
 const crypto = require('node:crypto');
 const { Readable } = require('node:stream');
 
+// The extension app can coexist with the preserved standard application.
+app.setName('SubtitleStudioProgressive');
+app.setPath('userData', path.join(app.getPath('appData'), 'SubtitleStudioProgressive'));
+
 protocol.registerSchemesAsPrivileged([{ scheme: 'studio-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 const root = path.resolve(__dirname, '..');
 const methods = new Set(['create', 'open', 'snapshot', 'dependencies', 'update', 'edit', 'undo', 'check', 'frame', 'srt', 'merge', 'split', 'cancel', 'scan', 'translate', 'export', 'preview', 'recommend', 'proxy', 'relocate']);

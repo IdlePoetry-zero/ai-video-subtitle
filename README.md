@@ -4,6 +4,22 @@ macOS 桌面应用：从视频画面识别外文硬字幕，恢复时间轴，�
 
 视频、OCR、编辑、保存和导出均使用真实实现。按照当前用户要求，不下载或安装独立模型，默认使用明确标注的模拟翻译。OCR 使用 macOS 自带 Apple Vision。真实翻译可连接云端 OpenAI 兼容 API、LM Studio 等本地兼容 API，或已有 Ollama 服务。
 
+## 逐步出现字幕扩展版
+
+当前扩展分支 `codex/progressive-subtitles` 增加可选的“扩展模式 · 逐步出现字幕”。`main` 与原标准应用包保留。新建和旧项目默认标准模式，原标准识别算法保持不变。
+
+在“字幕识别模式”切换到扩展模式，适用于固定区域内逐字、逐词增加的清晰字幕。应用合并文字增长过程、恢复整句并翻译一次；提供首次出现、完整候选与消失时间，以及逐步 OCR 证据。两种模式的结果、检查点和人工校对独立保存，可来回切换。
+
+“中文显示时机”可选从首次出现显示整句，或等待完整原文后显示整句；原文遮盖按原文出现时间计算。手工修改的时间不会被设置切换覆盖。本次不实现中文逐字动画、任意位置多气泡或特效文字识别；不安装独立模型，翻译默认明确的 mock。
+
+```sh
+.venv/bin/python tests/generate_progressive_fixture.py
+npm run test:progressive
+.venv/bin/python tests/verify_progressive_media.py
+```
+
+Goal 提示词见 [GOAL_PROGRESSIVE.md](GOAL_PROGRESSIVE.md)，实现与验收见 [扩展验收报告](docs/PROGRESSIVE_VALIDATION.md)。
+
 ## 运行
 
 当前项目依赖已经准备好：
@@ -93,7 +109,7 @@ npm run test:desktop
 npm run package
 ```
 
-输出 `release/SubtitleStudio-darwin-arm64/SubtitleStudio.app`。第一版为本机开发与本地打包成果，不包含签名、公证或可跨电脑直接运行的独立 Python 分发。迁移电脑时请重新准备依赖；不要把当前机器的虚拟环境当成通用安装包。
+当前扩展分支输出 `release-progressive/SubtitleStudioProgressive-darwin-arm64/SubtitleStudioProgressive.app`，不覆盖原 `release/SubtitleStudio-darwin-arm64/SubtitleStudio.app`，应用用户配置目录也分别保存。第一版为本机开发与本地打包成果，不包含签名、公证或可跨电脑直接运行的独立 Python 分发。迁移电脑时请重新准备依赖；不要把当前机器的虚拟环境当成通用安装包。
 
 ## 已知边界
 
