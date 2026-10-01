@@ -1,0 +1,12 @@
+node_modules/
+.venv/
+dist/
+release/
+runtime/
+projects/
+artifacts/
+__pycache__/
+.pytest_cache/
+.DS_Store
+.env
+*.log

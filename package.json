@@ -1,0 +1,30 @@
+{
+  "name": "subtitle-studio",
+  "version": "0.1.0",
+  "description": "本地外文硬字幕识别、中文翻译与视频导出",
+  "private": true,
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "test": ".venv/bin/python -m pytest tests -q",
+    "test:desktop": "node tests/desktop.mjs",
+    "dev": "node scripts/dev.mjs",
+    "build": "tsc --noEmit && vite build",
+    "start": "electron .",
+    "typecheck": "tsc --noEmit",
+    "package": "npm run build && electron-packager . SubtitleStudio --platform=darwin --arch=arm64 --out=release --overwrite --no-asar --ignore='^/(artifacts|projects|release|runtime/(pip-cache|npm-cache|swift-cache|settings.json|worker.log)|tests|\\.git)(/|$)'"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "electron": "^44.5.1",
+    "playwright": "^1.58.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.0.0"
+  }
+}
