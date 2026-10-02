@@ -570,6 +570,10 @@ def translate_request(config, batch, context, key=""):
     elif provider == "api":
         endpoint = base + "/chat/completions"
         payload["response_format"] = {"type": "json_object"}
+        # DeepSeek Flash defaults to high-effort thinking. Subtitle batches
+        # need structured translation rather than a separate reasoning trace.
+        if parsed.hostname == "api.deepseek.com" and model.startswith("deepseek-"):
+            payload["thinking"] = {"type": "disabled"}
         if key:
             headers["Authorization"] = "Bearer " + key
     else:

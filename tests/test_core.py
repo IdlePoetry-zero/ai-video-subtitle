@@ -134,6 +134,27 @@ def test_api_and_ollama_transport_contracts(project, service):
     assert 'glossary' in json.loads(received[1][1]['messages'][1]['content'])
 
 
+@pytest.mark.parametrize('base,thinking', [
+    ('https://api.deepseek.com', {'type': 'disabled'}),
+    ('https://api.example.com/v1', None),
+])
+def test_deepseek_batch_translation_disables_default_thinking_only_at_official_host(monkeypatch, base, thinking):
+    import io
+    import urllib.request
+    received = []
+    class Opener:
+        def open(self, request, timeout):
+            received.append(json.loads(request.data))
+            content = json.dumps({'translations': [{'id': 'a', 'text': '希望不会花太久。'}]})
+            return io.BytesIO(json.dumps({'choices': [{'message': {'content': content}}]}).encode())
+    monkeypatch.setattr(urllib.request, 'build_opener', lambda *args: Opener())
+    response = translate_request({'provider': 'api', 'baseUrl': base, 'model': 'deepseek-flash'},
+                                 [{'id': 'a', 'source': "Hopefully it won't take long."}], [], 'test-only')
+    assert response == {'a': '希望不会花太久。'}
+    assert received[0].get('thinking') == thinking
+    assert received[0]['response_format'] == {'type': 'json_object'}
+
+
 def test_translation_transport_cancels_without_installing_model(project, service):
     cancel = threading.Event()
     timer = threading.Timer(.6, cancel.set); timer.start()
