@@ -124,3 +124,15 @@ npm run package
 - 本地未签名应用在文稿文件夹保存项目时可能等待 macOS 访问许可；真实测试中曾因此写入超时。独立临时目录中的桌面翻译、渲染和播放成功；需区分系统文件权限与模型服务错误。
 
 产品范围与验收标准见 `DESIGN.md`，执行记录见 `IMPLEMENTATION_PLAN.md`。
+
+## 渐进字幕高质量模式
+
+新增第三种可选识别模式：**扩展模式 · 渐进字幕高质量**。默认自动正文布局分离说话人和侧边选项，通过更长的换句确认、多帧候选与紧裁剪放大复读恢复整句。严格下半部/完整区域预设和手动排除框可处理对话框或已知水印。各模式结果独立保存，标准模式仍为默认。
+
+识别置信度不是正确率。中文省略号、水印和短促被打断的句子仍需校对；完整出现时间是有多帧支持的 OCR 候选时间，不保证文字语义已经完结。真实片段对比、退化案例和验证边界见 [高质量验收报告](docs/QUALITY_VALIDATION.md)。
+
+图像复核默认不发送截图。点击“上传字幕截图并复核这一条”才向当前支持图像的 API 发送最多三张字幕区域图；模型建议不会自动改写原文或人工译文。当前仅完成契约测试，真实图像外传实测等待具体授权；上述质量指标来自本地 OCR。[DeepSeek 图像接口说明](https://api-docs.deepseek.com/guides/vision/)。
+
+`npm run package:quality` 生成独立 `release-quality/SubtitleStudioQuality-darwin-arm64/SubtitleStudioQuality.app`；不会覆盖已有 `release/` 和 `release-progressive/`。Goal 提示词见 [GOAL_QUALITY.md](GOAL_QUALITY.md)，实施记录见 [QUALITY_PLAN.md](QUALITY_PLAN.md)。
+
+高质量独立应用将新项目与加密设置保存到 `~/Library/Application Support/SubtitleStudioQuality/`，重新打包可保留这些数据。

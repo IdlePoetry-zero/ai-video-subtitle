@@ -58,6 +58,9 @@ def start_job(kind, params):
                 result = scan(p, progress, cancel, params.get("start", 0), params.get("end"), params.get("force", False))
                 if not p.data["cues"]:
                     progress({"stage": "scan", "status": "complete", "message": "未识别到字幕，请检查区域与语言后重试。"})
+            elif kind == "review":
+                from worker.visual_review import review
+                result = review(p, params["id"], params.get("apiKey", ""), cancel)
             elif kind == "translate":
                 result = translate(p, progress, cancel, params.get("ids"), params.get("apiKey", ""), params.get("force", False))
             elif kind in ("export", "preview"):
@@ -93,7 +96,7 @@ def invoke(method, params):
         return {"requested": bool(job and job.is_alive())}
     if method == "snapshot":
         return require_project().snapshot()
-    if method in ("scan", "translate", "export", "preview", "recommend", "proxy"):
+    if method in ("scan", "translate", "review", "export", "preview", "recommend", "proxy"):
         return start_job(method, params)
     idle()
     if method == "dependencies":
@@ -103,6 +106,8 @@ def invoke(method, params):
         finally:
             ocr.close()
     if method in ("create", "open"):
+        if method == "open" and not (Path(params["directory"]) / "project.sqlite").is_file():
+            raise ValueError("该目录没有可用项目，请选择包含 project.sqlite 的目录。")
         candidate = Project.create(params["video"], params["directory"]) if method == "create" else Project(params["directory"])
         if not candidate.data:
             candidate.close()
@@ -154,7 +159,7 @@ def invoke(method, params):
         first["end"] = second["end"]
         first["cover_intervals"] = first.get("cover_intervals", [[first["original_start"], first["original_end"]]]) + second.get("cover_intervals", [[second["original_start"], second["original_end"]]])
         first.update(manual=True, manual_translation=bool(first["translation"]), translation_status="manual" if first["translation"] else "missing")
-        if first.get("recognition_mode") == "progressive":
+        if first.get("recognition_mode") in ("progressive", "progressive_hq"):
             first.update(manual_time=True, disappeared_at=second.get("disappeared_at", second["end"]),
                          complete_time=None, complete_supported=False, complete_evidence_text=None)
             first["growth"] = first.get("growth", []) + second.get("growth", [])
@@ -178,7 +183,7 @@ def invoke(method, params):
             if len(lines) > 1:
                 first[field], second[field] = lines[0], "\n".join(lines[1:])
         for cue in (first, second):
-            if cue.get("recognition_mode") == "progressive":
+            if cue.get("recognition_mode") in ("progressive", "progressive_hq"):
                 cue.update(manual_translation=bool(cue["translation"]),
                            translation_status="manual" if cue["translation"] else "missing")
         cues.insert(index + 1, second)

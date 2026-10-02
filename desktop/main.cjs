@@ -8,11 +8,12 @@ const { Readable } = require('node:stream');
 
 // The extension app can coexist with the preserved standard application.
 app.setName('SubtitleStudioProgressive');
-app.setPath('userData', path.join(app.getPath('appData'), 'SubtitleStudioProgressive'));
+const qualityApp = process.execPath.includes('SubtitleStudioQuality.app') || process.env.STUDIO_QUALITY_APP === '1';
+app.setPath('userData', path.join(app.getPath('appData'), qualityApp ? 'SubtitleStudioQuality' : 'SubtitleStudioProgressive'));
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'studio-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 const root = path.resolve(__dirname, '..');
-const methods = new Set(['create', 'open', 'snapshot', 'dependencies', 'update', 'edit', 'undo', 'check', 'frame', 'srt', 'merge', 'split', 'cancel', 'scan', 'translate', 'export', 'preview', 'recommend', 'proxy', 'relocate']);
+const methods = new Set(['create', 'open', 'snapshot', 'dependencies', 'update', 'edit', 'undo', 'check', 'frame', 'srt', 'merge', 'split', 'cancel', 'scan', 'translate', 'review', 'export', 'preview', 'recommend', 'proxy', 'relocate']);
 const pending = new Map();
 const assets = new Map();
 const directories = new Set();
@@ -20,7 +21,9 @@ const files = new Set();
 let worker, window, count = 0, shutdown = false;
 let settings = { provider: 'mock', baseUrl: 'http://localhost:11434', model: '', glossary: '' };
 let apiKey = process.env.SUBTITLE_API_KEY || process.env.OPENAI_API_KEY || '';
-const settingsFile = path.join(root, 'runtime', 'settings.json');
+const runtimeDirectory = qualityApp ? path.join(app.getPath('userData'), 'runtime') : path.join(root, 'runtime');
+const settingsFile = qualityApp ? path.join(app.getPath('userData'), 'settings.json') : path.join(root, 'runtime', 'settings.json');
+const projectDirectory = qualityApp ? path.join(app.getPath('userData'), 'projects') : path.join(root, 'projects');
 
 function registerProject(project) {
   if (project?.directory) directories.add(path.resolve(project.directory));
@@ -52,7 +55,7 @@ function startWorker() {
   const python = process.env.STUDIO_PYTHON || path.join(root, '.venv/bin/python');
   if (!fs.existsSync(python)) throw new Error('缺少 Python 环境，请先运行 npm run setup。');
   worker = spawn(python, [path.join(root, 'worker/server.py')], { cwd: root, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
-  const logs = fs.createWriteStream(path.join(root, 'runtime', 'worker.log'), { flags: 'a' });
+  const logs = fs.createWriteStream(path.join(runtimeDirectory, 'worker.log'), { flags: 'a' });
   worker.stderr.pipe(logs);
   readline.createInterface({ input: worker.stdout }).on('line', line => {
     let value;
@@ -78,9 +81,11 @@ function startWorker() {
 }
 function loadSettings() {
   try {
-    const stored = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+    const source = qualityApp && !fs.existsSync(settingsFile) ? path.join(root, 'runtime', 'settings.json') : settingsFile;
+    const stored = JSON.parse(fs.readFileSync(source, 'utf8'));
     settings = { ...settings, ...stored.config };
     if (stored.encryptedKey && safeStorage.isEncryptionAvailable()) apiKey = safeStorage.decryptString(Buffer.from(stored.encryptedKey, 'base64'));
+    if (source !== settingsFile) fs.writeFileSync(settingsFile, JSON.stringify(stored), { mode: 0o600 });
   } catch { /* First launch. */ }
 }
 function assertSender(event) {
@@ -88,7 +93,8 @@ function assertSender(event) {
 }
 
 app.whenReady().then(async () => {
-  fs.mkdirSync(path.join(root, 'runtime'), { recursive: true });
+  fs.mkdirSync(runtimeDirectory, { recursive: true });
+  fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
   loadSettings();
   startWorker();
   protocol.handle('studio-media', request => {
@@ -115,7 +121,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('studio:request', async (event, method, params = {}) => {
     assertSender(event);
     if (!methods.has(method)) throw new Error('不支持该操作。');
-    if (method === 'translate') params = { ...params, apiKey };
+    if (method === 'translate' || method === 'review') params = { ...params, apiKey };
     if (method === 'create') directories.add(path.resolve(params.directory));
     const result = await rpc(method, params);
     registerProject(result);
@@ -140,7 +146,7 @@ app.whenReady().then(async () => {
       directories.add(path.resolve(process.env.STUDIO_TEST_PROJECT));
       return process.env.STUDIO_TEST_PROJECT;
     }
-    const directory = path.join(root, 'projects', new Date().toISOString().replace(/[:.]/g, '-') + '-' + crypto.randomBytes(3).toString('hex'));
+    const directory = path.join(projectDirectory, new Date().toISOString().replace(/[:.]/g, '-') + '-' + crypto.randomBytes(3).toString('hex'));
     directories.add(directory);
     return directory;
   });

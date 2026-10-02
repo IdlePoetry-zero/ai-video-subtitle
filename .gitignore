@@ -11,3 +11,4 @@ __pycache__/
 .env
 *.log
 release-progressive/
+release-quality/

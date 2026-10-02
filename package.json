@@ -13,7 +13,8 @@
     "start": "electron .",
     "typecheck": "tsc --noEmit",
     "package": "npm run build && electron-packager . SubtitleStudioProgressive --app-bundle-id=com.idlepoetry.subtitle-studio.progressive --platform=darwin --arch=arm64 --out=release-progressive --overwrite --no-asar --ignore='^/(artifacts|projects|release|release-progressive|runtime/(pip-cache|npm-cache|swift-cache|settings.json|worker.log)|tests|\\.git)(/|$)'",
-    "test:progressive": "node tests/desktop-progressive.mjs"
+    "test:progressive": "node tests/desktop-progressive.mjs",
+    "package:quality": "npm run build && electron-packager . SubtitleStudioQuality --app-bundle-id=com.idlepoetry.subtitle-studio.quality --platform=darwin --arch=arm64 --out=release-quality --overwrite --no-asar --ignore='^/(artifacts|projects|release|release-progressive|release-quality|runtime/(pip-cache|npm-cache|swift-cache|settings.json|worker.log)|tests|\\.git)(/|$)'"
   },
   "dependencies": {
     "react": "^19.0.0",

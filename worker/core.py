@@ -262,12 +262,18 @@ class Project:
     def update(self, changes):
         with self.lock:
             for key in changes:
-                if key not in ("roi", "regions", "language", "style", "translation", "recognition_mode", "progressive"):
+                if key not in ("roi", "regions", "language", "style", "translation", "recognition_mode", "progressive", "quality"):
                     raise ValueError("不允许修改该项目字段。")
-            if "recognition_mode" in changes and changes["recognition_mode"] not in ("standard", "progressive"):
+            if "recognition_mode" in changes and changes["recognition_mode"] not in ("standard", "progressive", "progressive_hq"):
                 raise ValueError("字幕识别模式无效。")
             if "progressive" in changes and (set(changes["progressive"]) != {"display"} or changes["progressive"]["display"] not in ("first", "complete")):
                 raise ValueError("逐步字幕显示时机无效。")
+            if "quality" in changes:
+                quality = changes["quality"]
+                if not isinstance(quality, dict) or set(quality) != {"layout", "exclusions"} or quality["layout"] not in ("auto", "dialogue", "all") or not isinstance(quality["exclusions"], list) or len(quality["exclusions"]) > 20:
+                    raise ValueError("高质量模式布局配置无效。")
+                for excluded in quality["exclusions"]:
+                    validate_roi(excluded)
             if "roi" in changes:
                 validate_roi(changes["roi"])
             for region in changes.get("regions", []):
@@ -293,9 +299,9 @@ class Project:
                 self.data.update(restored)
                 self.data["task"] = {"stage": "ready", "status": "idle"}
             self.data.update(changes)
-            if "progressive" in changes and new_mode == "progressive":
+            if "progressive" in changes and new_mode in ("progressive", "progressive_hq"):
                 for cue in self.data["cues"]:
-                    if cue.get("recognition_mode") == "progressive" and not cue.get("manual_time", cue.get("manual", False)):
+                    if cue.get("recognition_mode") in ("progressive", "progressive_hq") and not cue.get("manual_time", cue.get("manual", False)):
                         cue["start"] = cue.get("complete_time") if changes["progressive"]["display"] == "complete" and cue.get("complete_time") is not None else cue["first_seen"]
             check_cues(self.data["cues"], self.data["style"], self.data["translation"].get("glossary", ""))
             self.save(history=True)
@@ -337,6 +343,9 @@ def event_to_cue(event):
 
 
 def scan(project, emit=lambda value: None, cancel=None, start=0., end=None, force=False):
+    if project.data.get("recognition_mode") == "progressive_hq":
+        from worker.quality import scan_quality
+        return scan_quality(project, emit, cancel, start, end, force)
     if project.data.get("recognition_mode", "standard") == "progressive":
         from worker.progressive import scan_progressive
         return scan_progressive(project, emit, cancel, start, end, force)
