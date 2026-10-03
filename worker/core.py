@@ -262,9 +262,9 @@ class Project:
     def update(self, changes):
         with self.lock:
             for key in changes:
-                if key not in ("roi", "regions", "language", "style", "translation", "recognition_mode", "progressive", "quality"):
+                if key not in ("roi", "regions", "language", "style", "translation", "recognition_mode", "progressive", "quality", "dynamic"):
                     raise ValueError("不允许修改该项目字段。")
-            if "recognition_mode" in changes and changes["recognition_mode"] not in ("standard", "progressive", "progressive_hq"):
+            if "recognition_mode" in changes and changes["recognition_mode"] not in ("standard", "progressive", "progressive_hq", "dynamic"):
                 raise ValueError("字幕识别模式无效。")
             if "progressive" in changes and (set(changes["progressive"]) != {"display"} or changes["progressive"]["display"] not in ("first", "complete")):
                 raise ValueError("逐步字幕显示时机无效。")
@@ -276,6 +276,12 @@ class Project:
                     validate_roi(excluded)
             if "roi" in changes:
                 validate_roi(changes["roi"])
+            if "dynamic" in changes:
+                dynamic = changes["dynamic"]
+                if not isinstance(dynamic, dict) or set(dynamic) != {"exclusions"} or not isinstance(dynamic["exclusions"], list) or len(dynamic["exclusions"]) > 20:
+                    raise ValueError("全画面模式排除配置无效。")
+                for excluded in dynamic["exclusions"]:
+                    validate_roi(excluded)
             for region in changes.get("regions", []):
                 validate_roi(region["roi"])
                 if not 0 <= region["start"] < region["end"] <= self.data["meta"]["duration"]:
@@ -299,9 +305,9 @@ class Project:
                 self.data.update(restored)
                 self.data["task"] = {"stage": "ready", "status": "idle"}
             self.data.update(changes)
-            if "progressive" in changes and new_mode in ("progressive", "progressive_hq"):
+            if "progressive" in changes and new_mode in ("progressive", "progressive_hq", "dynamic"):
                 for cue in self.data["cues"]:
-                    if cue.get("recognition_mode") in ("progressive", "progressive_hq") and not cue.get("manual_time", cue.get("manual", False)):
+                    if cue.get("recognition_mode") in ("progressive", "progressive_hq", "dynamic") and not cue.get("manual_time", cue.get("manual", False)):
                         cue["start"] = cue.get("complete_time") if changes["progressive"]["display"] == "complete" and cue.get("complete_time") is not None else cue["first_seen"]
             check_cues(self.data["cues"], self.data["style"], self.data["translation"].get("glossary", ""))
             self.save(history=True)
@@ -309,11 +315,17 @@ class Project:
 
     def edit_cue(self, cue_id, changes):
         allowed = {"source", "translation", "start", "end"}
+        if self.data.get("recognition_mode") == "dynamic":
+            allowed.update({"box", "ignored", "dynamic_verified"})
         if set(changes) - allowed:
             raise ValueError("字幕编辑字段无效。")
         with self.lock:
             cue = next(c for c in self.data["cues"] if c["id"] == cue_id)
             candidate = {**cue, **changes}
+            if "box" in changes:
+                validate_roi(changes["box"])
+            if any(name in changes and not isinstance(changes[name], bool) for name in ("ignored", "dynamic_verified")):
+                raise ValueError("事件确认或忽略状态必须为布尔值。")
             if not 0 <= candidate["start"] < candidate["end"] <= self.data["meta"]["duration"] + .05:
                 raise ValueError("字幕时间必须满足 0 ≤ 开始 < 结束 ≤ 视频时长。")
             cue.update(changes)
@@ -321,11 +333,16 @@ class Project:
             cue["manual"] = True
             if "start" in changes or "end" in changes:
                 cue["manual_time"] = True
+                if cue.get("recognition_mode") == "dynamic":
+                    cue["visible_intervals"] = [[cue["start"], cue["end"]]]
+                    cue["cover_intervals"] = [[cue["start"], cue["end"]]]
             if "translation" in changes:
                 cue["manual_translation"] = True
                 cue["translation_status"] = "manual"
             elif "source" in changes:
                 cue["translation_status"] = "stale"
+            if cue.get("recognition_mode") == "dynamic" and changes.get("dynamic_verified"):
+                cue["recognition_issue"] = ""
             check_cues(self.data["cues"], self.data["style"], self.data["translation"].get("glossary", ""))
             self.save(history=True)
         return self.snapshot()
@@ -343,6 +360,9 @@ def event_to_cue(event):
 
 
 def scan(project, emit=lambda value: None, cancel=None, start=0., end=None, force=False):
+    if project.data.get("recognition_mode") == "dynamic":
+        from worker.dynamic import scan_dynamic
+        return scan_dynamic(project, emit, cancel, start, end, force)
     if project.data.get("recognition_mode") == "progressive_hq":
         from worker.quality import scan_quality
         return scan_quality(project, emit, cancel, start, end, force)
@@ -511,8 +531,12 @@ def check_cues(cues, style=None, glossary=""):
         translated_digits = re.findall(r"\d+(?:\.\d+)?", cue.get("translation", ""))
         if cue.get("translation") and source_digits != translated_digits:
             issues.append("数字差异，请核对")
-        if i and cues[i - 1]["end"] > cue["start"] + .02:
+        if i and cue.get("recognition_mode") != "dynamic" and cues[i - 1]["end"] > cue["start"] + .02:
             issues.append("字幕时间重叠")
+        if cue.get("recognition_mode") == "dynamic":
+            from worker.dynamic import extra_issues
+            dynamic_issues = extra_issues(cue, cues)
+            issues = dynamic_issues if cue.get("ignored") else issues + dynamic_issues
         cue["issues"] = issues
 
 
@@ -640,6 +664,9 @@ def translate(project, emit=lambda value: None, cancel=None, ids=None, key="", f
     config = project.data["translation"]
     targets = [cue for cue in cues if (ids is None or cue["id"] in ids) and not cue.get("manual_translation")
                and (force or not cue.get("translation") or cue.get("translation_status") == "stale")]
+    if project.data.get("recognition_mode") == "dynamic":
+        from worker.dynamic import eligible
+        targets = [cue for cue in targets if eligible(cue)]
     for offset in range(0, len(targets), 8):
         if cancel.is_set():
             raise Cancelled()
@@ -690,6 +717,9 @@ def ass_text(text):
 
 
 def write_ass(project, path):
+    if project.data.get("recognition_mode") == "dynamic":
+        from worker.dynamic import write_dynamic_ass
+        return write_dynamic_ass(project, path)
     data = project.data
     width, height = data["meta"]["width"], data["meta"]["height"]
     style = data["style"]
@@ -734,6 +764,9 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 
 
 def export_srt(project, output, bilingual=False):
+    if project.data.get("recognition_mode") == "dynamic":
+        from worker.dynamic import export_dynamic_srt
+        return export_dynamic_srt(project, output, bilingual)
     cues = project.data["cues"]
     if not cues or any(not cue.get("translation", "").strip() for cue in cues):
         raise ValueError("请先识别并完成翻译。")

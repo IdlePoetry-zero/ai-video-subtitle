@@ -12,3 +12,4 @@ __pycache__/
 *.log
 release-progressive/
 release-quality/
+release-dynamic/

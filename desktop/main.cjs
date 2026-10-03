@@ -9,11 +9,13 @@ const { Readable } = require('node:stream');
 // The extension app can coexist with the preserved standard application.
 app.setName('SubtitleStudioProgressive');
 const qualityApp = process.execPath.includes('SubtitleStudioQuality.app') || process.env.STUDIO_QUALITY_APP === '1';
-app.setPath('userData', path.join(app.getPath('appData'), qualityApp ? 'SubtitleStudioQuality' : 'SubtitleStudioProgressive'));
+const dynamicApp = process.execPath.includes('SubtitleStudioDynamic.app') || process.env.STUDIO_DYNAMIC_APP === '1';
+const isolatedApp = qualityApp || dynamicApp;
+app.setPath('userData', path.join(app.getPath('appData'), dynamicApp ? 'SubtitleStudioDynamic' : qualityApp ? 'SubtitleStudioQuality' : 'SubtitleStudioProgressive'));
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'studio-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 const root = path.resolve(__dirname, '..');
-const methods = new Set(['create', 'open', 'snapshot', 'dependencies', 'update', 'edit', 'undo', 'check', 'frame', 'srt', 'merge', 'split', 'cancel', 'scan', 'translate', 'review', 'export', 'preview', 'recommend', 'proxy', 'relocate']);
+const methods = new Set(['create', 'open', 'snapshot', 'dependencies', 'update', 'edit', 'undo', 'check', 'frame', 'srt', 'merge', 'split', 'split_object', 'cancel', 'scan', 'translate', 'review', 'export', 'preview', 'recommend', 'proxy', 'relocate']);
 const pending = new Map();
 const assets = new Map();
 const directories = new Set();
@@ -21,9 +23,9 @@ const files = new Set();
 let worker, window, count = 0, shutdown = false;
 let settings = { provider: 'mock', baseUrl: 'http://localhost:11434', model: '', glossary: '' };
 let apiKey = process.env.SUBTITLE_API_KEY || process.env.OPENAI_API_KEY || '';
-const runtimeDirectory = qualityApp ? path.join(app.getPath('userData'), 'runtime') : path.join(root, 'runtime');
-const settingsFile = qualityApp ? path.join(app.getPath('userData'), 'settings.json') : path.join(root, 'runtime', 'settings.json');
-const projectDirectory = qualityApp ? path.join(app.getPath('userData'), 'projects') : path.join(root, 'projects');
+const runtimeDirectory = isolatedApp ? path.join(app.getPath('userData'), 'runtime') : path.join(root, 'runtime');
+const settingsFile = isolatedApp ? path.join(app.getPath('userData'), 'settings.json') : path.join(root, 'runtime', 'settings.json');
+const projectDirectory = isolatedApp ? path.join(app.getPath('userData'), 'projects') : path.join(root, 'projects');
 
 function registerProject(project) {
   if (project?.directory) directories.add(path.resolve(project.directory));
@@ -81,7 +83,11 @@ function startWorker() {
 }
 function loadSettings() {
   try {
-    const source = qualityApp && !fs.existsSync(settingsFile) ? path.join(root, 'runtime', 'settings.json') : settingsFile;
+    let source = isolatedApp && !fs.existsSync(settingsFile) ? path.join(root, 'runtime', 'settings.json') : settingsFile;
+    if (dynamicApp && !fs.existsSync(settingsFile)) {
+      const previous = path.join(app.getPath('appData'), 'SubtitleStudioQuality', 'settings.json');
+      if (fs.existsSync(previous)) source = previous;
+    }
     const stored = JSON.parse(fs.readFileSync(source, 'utf8'));
     settings = { ...settings, ...stored.config };
     if (stored.encryptedKey && safeStorage.isEncryptionAvailable()) apiKey = safeStorage.decryptString(Buffer.from(stored.encryptedKey, 'base64'));

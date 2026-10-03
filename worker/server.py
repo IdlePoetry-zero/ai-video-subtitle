@@ -61,6 +61,9 @@ def start_job(kind, params):
             elif kind == "review":
                 from worker.visual_review import review
                 result = review(p, params["id"], params.get("apiKey", ""), cancel)
+            elif kind == "split_object":
+                from worker.dynamic import split_object
+                result = split_object(p, params["id"], params.get("axis", "x"), params.get("fraction", .5), cancel)
             elif kind == "translate":
                 result = translate(p, progress, cancel, params.get("ids"), params.get("apiKey", ""), params.get("force", False))
             elif kind in ("export", "preview"):
@@ -96,7 +99,7 @@ def invoke(method, params):
         return {"requested": bool(job and job.is_alive())}
     if method == "snapshot":
         return require_project().snapshot()
-    if method in ("scan", "translate", "review", "export", "preview", "recommend", "proxy"):
+    if method in ("scan", "translate", "review", "export", "preview", "recommend", "proxy", "split_object"):
         return start_job(method, params)
     idle()
     if method == "dependencies":
@@ -149,6 +152,11 @@ def invoke(method, params):
     if method == "srt":
         return export_srt(p, params["output"], params.get("bilingual", False))
     if method == "merge":
+        if p.data.get("recognition_mode") == "dynamic":
+            from worker.dynamic import merge_objects
+            if not params.get("second_id"):
+                raise ValueError("全画面模式需要明确选择另一个对象，不能按时间列表自动合并下一条。")
+            return merge_objects(p, params["id"], params["second_id"])
         cues = p.data["cues"]
         index = next(i for i, cue in enumerate(cues) if cue["id"] == params["id"])
         if index + 1 >= len(cues):
@@ -168,6 +176,9 @@ def invoke(method, params):
         p.save(history=True)
         return p.snapshot()
     if method == "split":
+        if p.data.get("recognition_mode") == "dynamic":
+            from worker.dynamic import split_time
+            return split_time(p, params["id"], float(params["time"]))
         cues = p.data["cues"]
         index = next(i for i, cue in enumerate(cues) if cue["id"] == params["id"])
         first = cues[index]

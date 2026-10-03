@@ -10,7 +10,7 @@ macOS 桌面应用：从视频画面识别外文硬字幕，恢复时间轴，�
 
 在“字幕识别模式”切换到扩展模式，适用于固定区域内逐字、逐词增加的清晰字幕。应用合并文字增长过程、恢复整句并翻译一次；提供首次出现、完整候选与消失时间，以及逐步 OCR 证据。两种模式的结果、检查点和人工校对独立保存，可来回切换。
 
-“中文显示时机”可选从首次出现显示整句，或等待完整原文后显示整句；原文遮盖按原文出现时间计算。手工修改的时间不会被设置切换覆盖。本次不实现中文逐字动画、任意位置多气泡或特效文字识别；不安装独立模型，翻译默认明确的 mock。
+“中文显示时机”可选从首次出现显示整句，或等待完整原文后显示整句；原文遮盖按原文出现时间计算。手工修改的时间不会被设置切换覆盖。逐步出现模式针对固定区域，不实现中文逐字动画、任意位置多气泡或特效文字识别；不安装独立模型，翻译默认明确的 mock。任意位置字幕请使用下方独立新增的全画面模式。
 
 ```sh
 .venv/bin/python tests/generate_progressive_fixture.py
@@ -136,3 +136,23 @@ npm run package
 `npm run package:quality` 生成独立 `release-quality/SubtitleStudioQuality-darwin-arm64/SubtitleStudioQuality.app`；不会覆盖已有 `release/` 和 `release-progressive/`。Goal 提示词见 [GOAL_QUALITY.md](GOAL_QUALITY.md)，实施记录见 [QUALITY_PLAN.md](QUALITY_PLAN.md)。
 
 高质量独立应用将新项目与加密设置保存到 `~/Library/Application Support/SubtitleStudioQuality/`，重新打包可保留这些数据。
+
+## 全画面字幕模式
+
+新增第四种可选模式：**新模式 · 全画面字幕（任意位置 / 多对象）**。字幕可以在任意时段出现在任意位置；每个事件期间位置基本稳定，多个字幕块可同时逐步生成。应用持续发现文字，为每个对象分别保存局部框、文字增长证据和出现/消失时间。远处的相同文字、消失后再次出现的文字属于不同对象。没有永久正文区域。
+
+选择新模式后可直接试处理或识别全片。明确不翻译的水印可框选后加入全片排除，临时文字可逐事件忽略。待确认对象默认保留原画面，校对并确认后才参与翻译和覆盖；支持框校对、撤销、时间拆分、指定两个对象的合并，以及左右/上下划分后局部复读。划分只复读一帧，两个新对象需要分别确认。四种模式的结果和检查点独立保存。
+
+多个译文同时按各自字幕框显示，自动换行和缩字号；放不下时导出会提示调整，不静默溢出。覆盖只持续到该对象消失。位置预览是示意，请用“生成效果预览”检查实际排版。SRT 保留文字和时间，不能保存画面位置；原位置保存在项目中，MP4 使用局部排版。靠近顶部且上方空间不足时，“保留外文”的中文会向画面内靠拢，需检查重叠。
+
+首版使用本地 Apple Vision、局部背景覆盖及已有 API/Ollama 翻译接口。相邻气泡可能误合并，极小文字、短于发现间隔的文字、字体特效或复杂背景可能漏读。连续移动、旋转、气泡边界分割、无痕修复及中文逐字动画仍未实现。已完成合成多对象和已有真实视频短片段验证，尚未验证真实漫画式视频的泛化准确率，详见 [验收报告](docs/DYNAMIC_VALIDATION.md)。
+
+```sh
+.venv/bin/python tests/generate_dynamic_fixture.py
+.venv/bin/python -m pytest tests/test_dynamic.py -q
+npm run package:dynamic
+```
+
+新应用：`release-dynamic/SubtitleStudioDynamic-darwin-arm64/SubtitleStudioDynamic.app`。打包脚本不覆盖旧包，也不会自动覆盖已存在的新包。独立用户数据位于 `~/Library/Application Support/SubtitleStudioDynamic/`；首次启动可复制已有高质量版的加密翻译配置，后续设置独立保存，不复制旧项目。应用包按当前 Mac 的运行环境生成，尚未进行其他机器的分发验证。
+
+完整任务提示词见 [GOAL_DYNAMIC_SUBTITLES.md](GOAL_DYNAMIC_SUBTITLES.md)，实施记录见 [DYNAMIC_PLAN.md](DYNAMIC_PLAN.md)。原 `main` 和三个旧应用包保留。
