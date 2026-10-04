@@ -163,7 +163,7 @@ def main():
                 else:
                     assert abs(cue['start']-event['start'])<.35,(mode,'start',cue)
                 assert abs(cue['end']-event['end'])<.35,(mode,'end',cue)
-                if mode=='dynamic':assert cue['verified'],cue
+                if mode=='dynamic':assert cue['dynamic_verified'],cue
             first_key=project['scan']['key'];rpc.job('scan',{'start':0,'end':12})
             assert rpc.request('snapshot')['scan']['key']==first_key
             rpc.job('translate',{'apiKey':'fixture-key'})

@@ -1,8 +1,14 @@
 # 字幕工作室
 
-macOS 桌面应用：从视频画面识别外文硬字幕，恢复时间轴，翻译、校对，导出中文 SRT 或带中文字幕的 MP4。
+桌面应用：从视频画面识别外文硬字幕，恢复时间轴，翻译、校对，导出中文 SRT 或带中文字幕的 MP4。已保留 macOS 版本，并在独立 `codex/windows-port` 分支提供 Windows 11 x64 移植。
 
-视频、OCR、编辑、保存和导出均使用真实实现。按照当前用户要求，不下载或安装独立模型，默认使用明确标注的模拟翻译。OCR 使用 macOS 自带 Apple Vision。真实翻译可连接云端 OpenAI 兼容 API、LM Studio 等本地兼容 API，或已有 Ollama 服务。
+视频、OCR、编辑、保存和导出均使用真实实现。macOS OCR 使用自带 Apple Vision；Windows 随包提供 RapidOCR / ONNX CPU 模型、处理运行时、FFmpeg 与中文字体。默认使用明确标注的模拟翻译。真实翻译可连接云端 OpenAI 兼容 API、LM Studio 等本地兼容 API，或已有 Ollama 服务。
+
+## Windows 11 x64
+
+Windows 版本保留标准、逐步、高质量、全画面四种模式，英语源字幕经过单独校准，其他源语言尚未纳入首版支持。安装程序和便携 ZIP 输出在独立 `release-windows`，用户无需自行安装 Python、FFmpeg 或 OCR。原 macOS 发布目录保留。
+
+使用和构建见 [Windows 说明](docs/WINDOWS.md)，目标见 [GOAL_WINDOWS.md](GOAL_WINDOWS.md)。GitHub Actions 工作流 `Windows build and acceptance` 使用生成的无敏感视频，在 Windows 构建并验证后端、中文导出、安装程序和应用启动。初版未签名。
 
 ## 逐步出现字幕扩展版
 
@@ -45,7 +51,7 @@ npm start
 
 需要 macOS 12 或更高版本、Node 22.12 或更高版本、Python 3.12 及 Xcode Command Line Tools 的 clang。当前实测设备为 macOS arm64，Node 24.13.0、Python 3.12.14。setup 会建立项目内 `.venv`、安装 `requirements.lock` 中的 Python 库并编译原生 OCR helper，不安装独立模型。没有单独安装 FFmpeg 时使用 imageio-ffmpeg 中的 arm64 二进制；视频元信息与时间戳通过 PyAV 的 FFmpeg API 读取。
 
-可通过 `STUDIO_SETUP_PYTHON` 指定创建虚拟环境的 Python，通过 `STUDIO_PYTHON` 指定运行 worker 的解释器，通过 `FFMPEG_BINARY` 指定 FFmpeg。当前 setup 优先使用本机已有的 Codex Python 运行时；迁移到其他电脑应先提供 Python 3.12，再重新 setup。
+可通过 `STUDIO_SETUP_PYTHON` 指定创建虚拟环境的 Python，通过 `STUDIO_PYTHON` 指定运行 worker 的解释器，通过 `FFMPEG_BINARY` 指定 FFmpeg。setup 使用系统 Python 或指定的解释器；迁移开发环境时应先提供 Python 3.12，再重新 setup。
 
 ## 使用
 

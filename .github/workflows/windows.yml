@@ -5,6 +5,9 @@ on:
     branches: [codex/windows-port]
 permissions:
   contents: read
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   windows:
     runs-on: windows-latest
