@@ -11,3 +11,17 @@ def test_pipe_reader_handles_unicode_multiple_buffered_lines_and_eof():
     assert reader.get(10) == 'second\n'
     assert reader.get(10) is None
     assert child.wait(5) == 0
+
+
+def test_windows_quality_keeps_sole_sentence_but_respects_exclusion(monkeypatch):
+    from worker import quality
+    monkeypatch.setattr(quality,'rapid_ocr',lambda:True)
+    item={'text':'Hello world.','confidence':.98,'box':[.02,.2,.16,.25]}
+    result={'items':[item],'unreadable':False}
+    assert quality.select_body(result,[0,0,1,1])['text']=='Hello world.'
+    assert quality.select_body(result,[0,0,1,1],{'exclusions':[[0,0,.3,.6]]})['text']==''
+    item['text']='Back'
+    assert quality.select_body(result,[0,0,1,1])['text']==''
+    monkeypatch.setattr(quality,'rapid_ocr',lambda:False)
+    item['text']='Hello world.'
+    assert quality.select_body(result,[0,0,1,1])['text']==''

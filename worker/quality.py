@@ -42,11 +42,18 @@ def select_body(result, roi, config=None):
     config = {**DEFAULTS, **(config or {})}
     kept, excluded, available = [], [], []
     learned = config.get('_speaker_keys', [])
+    # RapidOCR's tight line boxes can put a short, left-aligned sentence in the
+    # old side-option band. Preserve a sole high-confidence complete sentence;
+    # manual exclusions and explicit dialogue/all layout still take precedence.
+    items = result.get('items', [])
+    standalone_sentence = rapid_ocr() and config['layout'] == 'auto' and len(items) == 1 and \
+        items[0].get('confidence', 0) >= .85 and len(normalize(items[0]['text'])) >= 6 and \
+        bool(re.search(r'[.!?。！？]$', items[0]['text'].strip()))
     for item in result.get('items', []):
         x, y, w, h = item['box']
         center_x, center_y = roi[0]+roi[2]*(x+w/2), roi[1]+roi[3]*(y+h/2)
         blocked = any(b[0] <= center_x <= b[0]+b[2] and b[1] <= center_y <= b[1]+b[3] for b in config['exclusions'])
-        side_option = config['layout'] != 'all' and y+h/2 < .48 and (x+w/2 > .8 or x+w/2 < .2)
+        side_option = not standalone_sentence and config['layout'] != 'all' and y+h/2 < .48 and (x+w/2 > .8 or x+w/2 < .2)
         if blocked or side_option:
             excluded.append(item)
         else:

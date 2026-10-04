@@ -28,7 +28,10 @@ def main():
     # Stdout is exclusively JSON RPC. Libraries log to stderr.
     from rapidocr_onnxruntime import RapidOCR
     validate_models()
+    import onnxruntime
+    onnxruntime.disable_telemetry_events()
     engine = RapidOCR(intra_op_num_threads=2, inter_op_num_threads=1,
+                      det_limit_side_len=1920, det_limit_type='max',
                       det_use_cuda=False, cls_use_cuda=False, rec_use_cuda=False)
     for line in sys.stdin:
         try:

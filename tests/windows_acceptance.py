@@ -28,7 +28,7 @@ os.environ['PYTHONUTF8'] = '1'
 import av
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from worker.core import frames, probe, ffmpeg_path, normalize
+from worker.core import frames, probe, ffmpeg_path, normalize, VisionOCR, crop
 from worker.platform_runtime import chinese_font, subprocess_options
 
 OUT = Path(args.output).resolve()
@@ -143,7 +143,9 @@ def main():
             print('Checking',mode,flush=True)
             directory=OUT/('中文项目 '+mode)
             rpc.request('create',{'video':str(source),'directory':str(directory)})
-            rpc.request('update',{'changes':{'recognition_mode':mode,'roi':[.03,.74,.93,.23],
+            # Auto dialogue layout treats the lower half as body; position the
+            # chosen fixed region around the actual caption, as in the UI.
+            rpc.request('update',{'changes':{'recognition_mode':mode,'roi':[.03,.72,.93,.16],
                        'translation':{'provider':'api','baseUrl':f'http://127.0.0.1:{server.server_port}/v1','model':'fixture','glossary':''}}})
             if mode=='dynamic':
                 assert rpc.job('scan',{'start':0,'end':12},cancel_at=3)['status']=='cancelled'
@@ -182,12 +184,15 @@ def main():
             # Pixel evidence: bright source bubble is covered, Chinese glyphs exist.
             source_frame=next(frames(source,3,3.05,.05))[1]
             output_frame=next(frames(output,3,3.05,.05))[1]
-            patch=output_frame[555:615,80:390]
             assert np.mean(np.abs(output_frame.astype(float)-source_frame.astype(float)))>.3
-            assert np.percentile(patch,95)-np.percentile(patch,5)>50
+            verifier=VisionOCR()
+            try: rendered=verifier.recognize(crop(output_frame,[.03,.74,.93,.23]))
+            finally: verifier.close()
+            assert any('\u4e00'<=char<='\u9fff' for char in rendered['text']),rendered
             Image.fromarray(output_frame).save(directory/'中文导出证据.png')
             report['modes'][mode]={'passed':True,'recognized':[c['source'] for c in selected],
                                   'cues':len(cues),'frames':count,'output':str(output),'metadata':metadata,
+                                  'rendered_chinese_ocr':rendered['text'],
                                   'cancel_resume':mode=='dynamic'}
         assert API.calls,'Frozen translation child did not call HTTP fixture'
         report['http_translation_requests']=len(API.calls);report['passed']=True

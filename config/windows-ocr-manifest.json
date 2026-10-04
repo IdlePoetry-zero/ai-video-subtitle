@@ -1,7 +1,8 @@
 {
   "rapidocr": "1.4.4",
   "onnxruntime": "1.30.0",
-  "adapter": "1",
+  "adapter": "3",
+  "detection": {"limit_side_len": 1920, "limit_type": "max"},
   "source_languages": [
     "en-US"
   ],

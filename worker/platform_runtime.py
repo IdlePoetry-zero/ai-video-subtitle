@@ -20,7 +20,7 @@ def ocr_identity():
     manifest = ROOT / 'runtime/ocr-models.manifest.json'
     if not manifest.is_file():
         raise RuntimeError('缺少 OCR 模型清单，请重新安装 Windows 处理组件。')
-    return 'rapidocr-onnx-1.4.4-v1-' + hashlib.sha256(manifest.read_bytes()).hexdigest()
+    return 'rapidocr-onnx-1.4.4-' + hashlib.sha256(manifest.read_bytes()).hexdigest()
 
 
 def chinese_font():
