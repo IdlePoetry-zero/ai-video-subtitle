@@ -17,7 +17,7 @@
     "package:quality": "npm run build && electron-packager . SubtitleStudioQuality --app-bundle-id=com.idlepoetry.subtitle-studio.quality --platform=darwin --arch=arm64 --out=release-quality --overwrite --no-asar --ignore='^/(artifacts|projects|release|release-progressive|release-quality|runtime/(pip-cache|npm-cache|swift-cache|settings.json|worker.log)|tests|\\.git)(/|$)'",
     "package:dynamic": "npm run build && electron-packager . SubtitleStudioDynamic --app-bundle-id=com.idlepoetry.subtitle-studio.dynamic --platform=darwin --arch=arm64 --out=release-dynamic --no-asar --ignore='^/(artifacts|projects|release[^/]*|runtime/(pip-cache|npm-cache|swift-cache|settings.json|worker.log)|tests|\\.git)(/|$)'",
     "package:windows": "node scripts/package_windows.mjs",
-    "test:windows": "python tests/windows_acceptance.py"
+    "test:windows": "node scripts/test_windows.mjs"
   },
   "dependencies": {
     "react": "^19.0.0",
