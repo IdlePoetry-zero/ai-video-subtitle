@@ -25,7 +25,7 @@ import imageio_ffmpeg
 import numpy as np
 from PIL import Image
 
-from worker.platform_runtime import ROOT, LineReader, rapid_ocr, ocr_identity, chinese_font, subprocess_options
+from worker.platform_runtime import ROOT, LineReader, rapid_ocr, ocr_identity, chinese_font, subprocess_options, external_process, remove_temporary
 OCR_VERSION = ocr_identity()
 
 
@@ -825,14 +825,14 @@ def export_video(project, output, emit=lambda value: None, cancel=None, start=No
         font_filter = ":fontsdir=render-fonts"
     temporary = output.with_name(output.stem + ".partial.mp4")
     # Relative constant filename avoids FFmpeg filter escaping of user-controlled paths.
-    command = [ffmpeg_path(), "-hide_banner", "-y", "-i", project.data["meta"]["path"], "-vf", "scale=trunc(iw*sar/2)*2:trunc(ih/2)*2,setsar=1,ass=render.ass" + font_filter,
+    command = [ffmpeg_path(), "-hide_banner", "-nostdin", "-y", "-i", project.data["meta"]["path"], "-vf", "scale=trunc(iw*sar/2)*2:trunc(ih/2)*2,setsar=1,ass=render.ass" + font_filter,
                "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart"]
     if start is not None:
         command.extend(["-ss", str(start), "-t", str(duration)])
     command.extend(["-progress", "pipe:1", "-nostats", str(temporary)])
     error_path = project.directory / "export-error.log"
     with error_path.open("w") as error:
-        process = subprocess.Popen(command, cwd=project.directory, stdout=subprocess.PIPE, stderr=error, text=True, encoding='utf-8', **subprocess_options())
+        process = external_process(command, cwd=project.directory, stdout=subprocess.PIPE, stderr=error, text=True, encoding='utf-8')
         reader = LineReader(process.stdout)
         try:
             while process.poll() is None:
@@ -859,7 +859,7 @@ def export_video(project, output, emit=lambda value: None, cancel=None, start=No
                     process.kill()
                     process.wait()
             if temporary.exists():
-                temporary.unlink()
+                remove_temporary(temporary)
     project.data["outputs"].append(str(output))
     project.save()
     return {"path": str(output)}
@@ -883,9 +883,9 @@ def prepare_proxy(project, emit=lambda value: None, cancel=None):
         return {"path": str(output)}
     temporary = project.directory / "source-preview.partial.mp4"
     meta = project.data["meta"]
-    command = [ffmpeg_path(), "-hide_banner", "-y", "-i", meta["path"], "-map", "0:v:0", "-map", "0:a:0?", "-vf", "scale=trunc(iw*sar/2)*2:trunc(ih/2)*2,setsar=1", "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", "-progress", "pipe:1", "-nostats", str(temporary)]
+    command = [ffmpeg_path(), "-hide_banner", "-nostdin", "-y", "-i", meta["path"], "-map", "0:v:0", "-map", "0:a:0?", "-vf", "scale=trunc(iw*sar/2)*2:trunc(ih/2)*2,setsar=1", "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", "-progress", "pipe:1", "-nostats", str(temporary)]
     with (project.directory / "proxy-error.log").open("w") as error:
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=error, text=True, encoding='utf-8', **subprocess_options())
+        process = external_process(command, stdout=subprocess.PIPE, stderr=error, text=True, encoding='utf-8')
         reader = LineReader(process.stdout)
         try:
             while process.poll() is None:
@@ -907,7 +907,7 @@ def prepare_proxy(project, emit=lambda value: None, cancel=None):
                 try: process.wait(3)
                 except subprocess.TimeoutExpired:
                     process.kill(); process.wait()
-            if temporary.exists(): temporary.unlink()
+            if temporary.exists(): remove_temporary(temporary)
     project.data["preview_path"] = str(output)
     project.save()
     return {"path": str(output)}

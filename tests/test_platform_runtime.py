@@ -22,6 +22,14 @@ def test_windows_quality_keeps_sole_sentence_but_respects_exclusion(monkeypatch)
     assert quality.select_body(result,[0,0,1,1],{'exclusions':[[0,0,.3,.6]]})['text']==''
     item['text']='Back'
     assert quality.select_body(result,[0,0,1,1])['text']==''
+
+
+def test_external_encoder_does_not_read_parent_rpc_stdin():
+    from worker.platform_runtime import external_process
+    process=external_process([sys.executable,'-c','import sys;print(len(sys.stdin.read()))'],
+                             stdout=subprocess.PIPE,text=True)
+    output,_=process.communicate(timeout=5)
+    assert process.returncode==0 and output.strip()=='0'
     monkeypatch.setattr(quality,'rapid_ocr',lambda:False)
     item['text']='Hello world.'
     assert quality.select_body(result,[0,0,1,1])['text']==''

@@ -6,6 +6,8 @@ import os
 import queue
 import sys
 import threading
+import subprocess
+import time
 
 ROOT = Path(os.environ.get('STUDIO_RESOURCE_ROOT', Path(__file__).resolve().parent.parent))
 
@@ -37,6 +39,40 @@ def chinese_font():
 
 def subprocess_options():
     return {'creationflags': 0x08000000} if sys.platform == 'win32' else {}
+
+
+_external_launch_lock = threading.Lock()
+
+
+def external_process(command, **kwargs):
+    """FFmpeg must not inherit the frozen Python DLL search path or RPC stdin."""
+    kwargs.setdefault('stdin',subprocess.DEVNULL)
+    kwargs.update(subprocess_options())
+    if sys.platform != 'win32' or not getattr(sys,'frozen',False):
+        return subprocess.Popen(command,**kwargs)
+    import ctypes
+    with _external_launch_lock:
+        ctypes.windll.kernel32.SetDllDirectoryW(None)
+        try:
+            environment=os.environ.copy()
+            bundled=str(Path(sys._MEIPASS).resolve()).casefold()
+            environment['PATH']=os.pathsep.join(p for p in environment.get('PATH','').split(os.pathsep)
+                                               if not str(Path(p).resolve()).casefold().startswith(bundled))
+            return subprocess.Popen(command,env=environment,**kwargs)
+        finally:
+            ctypes.windll.kernel32.SetDllDirectoryW(str(sys._MEIPASS))
+
+
+def remove_temporary(path):
+    # Windows scanners/codec processes may retain a just-closed file briefly.
+    for attempt in range(10):
+        try:
+            path.unlink(missing_ok=True)
+            return True
+        except PermissionError:
+            if sys.platform != 'win32': raise
+            time.sleep(.1)
+    return False
 
 
 class LineReader:
