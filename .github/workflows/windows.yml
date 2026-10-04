@@ -50,17 +50,22 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $env:STUDIO_TEST_MODE = '1'
-          $env:STUDIO_TEST_USER_DATA = "$pwd/artifacts/windows/测试设置"
-          $env:STUDIO_WINDOWS_SMOKE = "$pwd/artifacts/windows/portable-startup.json"
-          $process = Start-Process -FilePath "$pwd/release-windows/win-unpacked/SubtitleStudioWindows.exe" -PassThru
+          $env:STUDIO_TEST_USER_DATA = Join-Path $pwd.Path 'artifacts\windows\测试设置'
+          $env:STUDIO_WINDOWS_SMOKE = Join-Path $pwd.Path 'artifacts\windows\portable-startup.json'
+          $process = Start-Process -FilePath (Join-Path $pwd.Path 'release-windows\win-unpacked\SubtitleStudioWindows.exe') -PassThru
           if (-not $process.WaitForExit(90000)) { Stop-Process $process; throw 'Portable startup timed out' }
           if (-not (Test-Path $env:STUDIO_WINDOWS_SMOKE)) { throw 'Portable startup probe failed' }
           $installer = Get-ChildItem release-windows/*-setup.exe | Select-Object -First 1
-          $destination = "$pwd/artifacts/windows/Installed 字幕工作室"
+          $destination = Join-Path $pwd.Path 'artifacts\windows\Installed 字幕工作室'
           $process = Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$destination" -PassThru -Wait
           if ($process.ExitCode -ne 0) { throw 'Installer failed' }
-          $env:STUDIO_WINDOWS_SMOKE = "$pwd/artifacts/windows/installed-startup.json"
-          $process = Start-Process -FilePath "$destination/SubtitleStudioWindows.exe" -PassThru
+          if (-not (Test-Path $destination)) {
+            Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object DisplayName -eq 'SubtitleStudioWindows' | Select-Object DisplayName,InstallLocation
+            throw "Installer did not use requested directory: $destination"
+          }
+          Get-ChildItem $destination | Select-Object Name,Length
+          $env:STUDIO_WINDOWS_SMOKE = Join-Path $pwd.Path 'artifacts\windows\installed-startup.json'
+          $process = Start-Process -FilePath (Join-Path $destination 'SubtitleStudioWindows.exe') -PassThru
           if (-not $process.WaitForExit(90000)) { Stop-Process $process; throw 'Installed startup timed out' }
           if (-not (Test-Path $env:STUDIO_WINDOWS_SMOKE)) { throw 'Installed startup probe failed' }
           $uninstaller = Get-ChildItem $destination/*ninstall*.exe | Select-Object -First 1
