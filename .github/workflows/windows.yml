@@ -1,0 +1,89 @@
+name: Windows build and acceptance
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/windows-port]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    env:
+      PYTHONUTF8: '1'
+      STUDIO_OCR_ENGINE: rapidocr
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements.lock
+            requirements-windows.lock
+      - name: Install public dependencies
+        run: |
+          npm ci
+          python -m pip install -r requirements-windows.lock
+          python scripts/windows_assets.py
+      - name: Generate public fixtures and run regression
+        run: |
+          python tests/generate_fixture.py
+          python -m pytest tests -q
+      - name: Build Windows packages
+        env:
+          STUDIO_PYTHON: python
+        run: npm run package:windows
+      - name: Test frozen backend from packaged portable contents
+        run: |
+          python tests/windows_acceptance.py --worker release-windows/win-unpacked/resources/runtime/subtitle-worker/subtitle-worker.exe --resources release-windows/win-unpacked/resources --output artifacts/windows/frozen-acceptance
+      - name: Verify portable EXE and install/uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:STUDIO_TEST_MODE = '1'
+          $env:STUDIO_TEST_USER_DATA = "$pwd/artifacts/windows/测试设置"
+          $env:STUDIO_WINDOWS_SMOKE = "$pwd/artifacts/windows/portable-startup.json"
+          $process = Start-Process -FilePath "$pwd/release-windows/win-unpacked/SubtitleStudioWindows.exe" -PassThru
+          if (-not $process.WaitForExit(90000)) { Stop-Process $process; throw 'Portable startup timed out' }
+          if (-not (Test-Path $env:STUDIO_WINDOWS_SMOKE)) { throw 'Portable startup probe failed' }
+          $installer = Get-ChildItem release-windows/*-setup.exe | Select-Object -First 1
+          $destination = "$pwd/artifacts/windows/Installed 字幕工作室"
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$destination" -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw 'Installer failed' }
+          $env:STUDIO_WINDOWS_SMOKE = "$pwd/artifacts/windows/installed-startup.json"
+          $process = Start-Process -FilePath "$destination/SubtitleStudioWindows.exe" -PassThru
+          if (-not $process.WaitForExit(90000)) { Stop-Process $process; throw 'Installed startup timed out' }
+          if (-not (Test-Path $env:STUDIO_WINDOWS_SMOKE)) { throw 'Installed startup probe failed' }
+          $uninstaller = Get-ChildItem $destination/*ninstall*.exe | Select-Object -First 1
+          $process = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw 'Uninstall failed' }
+          if (-not (Test-Path $env:STUDIO_TEST_USER_DATA)) { throw 'Uninstall deleted user data' }
+      - name: Package checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem release-windows/*.exe,release-windows/*.zip | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content -Encoding utf8 release-windows/SHA256SUMS.txt
+      - name: Upload Windows downloads
+        uses: actions/upload-artifact@v4
+        with:
+          name: SubtitleStudio-Windows-x64
+          retention-days: 14
+          path: |
+            release-windows/*.exe
+            release-windows/*.zip
+            release-windows/SHA256SUMS.txt
+      - name: Upload public verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-verification
+          retention-days: 14
+          path: |
+            artifacts/windows/frozen-acceptance/**
+            artifacts/windows/*startup.json*
+            build-windows/*.spec

@@ -9,6 +9,10 @@ import threading
 import uuid
 import traceback
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdin.reconfigure(encoding="utf-8")
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PIL import Image
 from worker.core import (Project, VisionOCR, Cancelled, scan, translate, recommend, frames,

@@ -7,11 +7,12 @@ const crypto = require('node:crypto');
 const { Readable } = require('node:stream');
 
 // The extension app can coexist with the preserved standard application.
-app.setName('SubtitleStudioProgressive');
+const windowsApp = process.platform === 'win32';
+app.setName(windowsApp ? 'SubtitleStudioWindows' : 'SubtitleStudioProgressive');
 const qualityApp = process.execPath.includes('SubtitleStudioQuality.app') || process.env.STUDIO_QUALITY_APP === '1';
 const dynamicApp = process.execPath.includes('SubtitleStudioDynamic.app') || process.env.STUDIO_DYNAMIC_APP === '1';
-const isolatedApp = qualityApp || dynamicApp;
-app.setPath('userData', path.join(app.getPath('appData'), dynamicApp ? 'SubtitleStudioDynamic' : qualityApp ? 'SubtitleStudioQuality' : 'SubtitleStudioProgressive'));
+const isolatedApp = windowsApp || qualityApp || dynamicApp;
+app.setPath('userData', process.env.STUDIO_TEST_MODE === '1' && process.env.STUDIO_TEST_USER_DATA || path.join(app.getPath('appData'), windowsApp ? 'SubtitleStudioWindows' : dynamicApp ? 'SubtitleStudioDynamic' : qualityApp ? 'SubtitleStudioQuality' : 'SubtitleStudioProgressive'));
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'studio-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 const root = path.resolve(__dirname, '..');
@@ -21,6 +22,7 @@ const assets = new Map();
 const directories = new Set();
 const files = new Set();
 let worker, window, count = 0, shutdown = false;
+let smokeDependencies;
 let settings = { provider: 'mock', baseUrl: 'http://localhost:11434', model: '', glossary: '' };
 let apiKey = process.env.SUBTITLE_API_KEY || process.env.OPENAI_API_KEY || '';
 const runtimeDirectory = isolatedApp ? path.join(app.getPath('userData'), 'runtime') : path.join(root, 'runtime');
@@ -54,9 +56,11 @@ function rpc(method, params = {}) {
   });
 }
 function startWorker() {
-  const python = process.env.STUDIO_PYTHON || path.join(root, '.venv/bin/python');
+  const frozenWorker = windowsApp && app.isPackaged && path.join(process.resourcesPath, 'runtime', 'subtitle-worker', 'subtitle-worker.exe');
+  const python = frozenWorker || process.env.STUDIO_PYTHON || path.join(root, windowsApp ? '.venv/Scripts/python.exe' : '.venv/bin/python');
   if (!fs.existsSync(python)) throw new Error('缺少 Python 环境，请先运行 npm run setup。');
-  worker = spawn(python, [path.join(root, 'worker/server.py')], { cwd: root, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
+  worker = spawn(python, frozenWorker ? [] : [path.join(root, 'worker/server.py')], { cwd: frozenWorker ? process.resourcesPath : root,
+    env: { ...process.env, PYTHONUTF8: '1', ...(frozenWorker ? { STUDIO_RESOURCE_ROOT: process.resourcesPath } : {}) }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   const logs = fs.createWriteStream(path.join(runtimeDirectory, 'worker.log'), { flags: 'a' });
   worker.stderr.pipe(logs);
   readline.createInterface({ input: worker.stdout }).on('line', line => {
@@ -83,7 +87,7 @@ function startWorker() {
 }
 function loadSettings() {
   try {
-    let source = isolatedApp && !fs.existsSync(settingsFile) ? path.join(root, 'runtime', 'settings.json') : settingsFile;
+    let source = isolatedApp && !windowsApp && !fs.existsSync(settingsFile) ? path.join(root, 'runtime', 'settings.json') : settingsFile;
     if (dynamicApp && !fs.existsSync(settingsFile)) {
       const previous = path.join(app.getPath('appData'), 'SubtitleStudioQuality', 'settings.json');
       if (fs.existsSync(previous)) source = previous;
@@ -130,6 +134,7 @@ app.whenReady().then(async () => {
     if (method === 'translate' || method === 'review') params = { ...params, apiKey };
     if (method === 'create') directories.add(path.resolve(params.directory));
     const result = await rpc(method, params);
+    if (method === 'dependencies') smokeDependencies = result;
     registerProject(result);
     if (method === 'create') return rpc('update', { changes: { translation: settings } });
     return result;
@@ -185,8 +190,24 @@ app.whenReady().then(async () => {
   window.webContents.on('will-navigate', event => event.preventDefault());
   if (process.env.STUDIO_DEV_URL) await window.loadURL(process.env.STUDIO_DEV_URL);
   else await window.loadFile(path.join(root, 'dist/index.html'));
+  if (windowsApp && process.env.STUDIO_TEST_MODE === '1' && process.env.STUDIO_WINDOWS_SMOKE) {
+    // CI startup probe exercises the shipped renderer and its normal RPC bootstrap.
+    const resultPath = process.env.STUDIO_WINDOWS_SMOKE;
+    const deadline = Date.now() + 60000;
+    while (!smokeDependencies && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+    if (!smokeDependencies) throw new Error('Windows renderer bootstrap did not reach local OCR.');
+    const image = await window.webContents.capturePage();
+    fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+    fs.writeFileSync(resultPath + '.png', image.toPNG());
+    fs.writeFileSync(resultPath, JSON.stringify({ passed: true, packaged: app.isPackaged,
+      platform: process.platform, userData: app.getPath('userData'), dependencies: smokeDependencies }, null, 2));
+    app.quit();
+  }
   window.on('closed', () => { window = null; });
 }).catch(error => { dialog.showErrorBox('无法启动字幕工作室', error.message); app.quit(); });
 
 app.on('window-all-closed', () => app.quit());
-app.on('before-quit', () => { shutdown = true; if (worker && worker.exitCode === null) { worker.kill('SIGTERM'); setTimeout(() => { if (worker.exitCode === null) worker.kill('SIGKILL'); }, 5000).unref(); } });
+app.on('before-quit', () => { shutdown = true; if (worker && worker.exitCode === null) {
+  if (windowsApp) spawn('taskkill', ['/pid', String(worker.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+  else { worker.kill('SIGTERM'); setTimeout(() => { if (worker.exitCode === null) worker.kill('SIGKILL'); }, 5000).unref(); }
+} });

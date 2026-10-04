@@ -9,7 +9,7 @@ import math
 import os
 from pathlib import Path
 import re
-import select
+import sys
 import shutil
 import sqlite3
 import subprocess
@@ -25,8 +25,8 @@ import imageio_ffmpeg
 import numpy as np
 from PIL import Image
 
-ROOT = Path(__file__).resolve().parent.parent
-OCR_VERSION = "vision-accurate-v3"
+from worker.platform_runtime import ROOT, LineReader, rapid_ocr, ocr_identity, chinese_font, subprocess_options
+OCR_VERSION = ocr_identity()
 
 
 class Cancelled(Exception):
@@ -34,7 +34,8 @@ class Cancelled(Exception):
 
 
 def ffmpeg_path():
-    return os.environ.get("FFMPEG_BINARY") or shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
+    return os.environ.get("FFMPEG_BINARY") or (imageio_ffmpeg.get_ffmpeg_exe() if rapid_ocr()
+                                             else shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe())
 
 
 def normalize(text):
@@ -51,11 +52,18 @@ def compatible(a, b):
 
 class VisionOCR:
     def __init__(self):
-        binary = ROOT / "runtime/vision-ocr"
-        if not binary.is_file():
-            raise RuntimeError("OCR 组件未编译，请运行 npm run setup。")
-        self.process = subprocess.Popen([str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                        stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        if rapid_ocr():
+            command = ([sys.executable, '--ocr-worker'] if getattr(sys, 'frozen', False)
+                       else [sys.executable, '-m', 'worker.ocr_rapid'])
+        else:
+            binary = ROOT / "runtime/vision-ocr"
+            if not binary.is_file():
+                raise RuntimeError("OCR 组件未编译，请运行 npm run setup。")
+            command = [str(binary)]
+        self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                        stderr=subprocess.DEVNULL, text=True, encoding='utf-8', bufsize=1,
+                                        **subprocess_options())
+        self.reader = LineReader(self.process.stdout)
         self.calls = 0
 
     def request(self, payload):
@@ -63,10 +71,11 @@ class VisionOCR:
             raise RuntimeError("系统 OCR 已退出，请重新启动识别。")
         self.process.stdin.write(json.dumps(payload) + "\n")
         self.process.stdin.flush()
-        if not select.select([self.process.stdout], [], [], 30)[0]:
+        line = self.reader.get(60 if rapid_ocr() else 30)
+        if not line:
             self.close()
             raise RuntimeError("系统 OCR 响应超时，请重新启动识别。")
-        result = json.loads(self.process.stdout.readline())
+        result = json.loads(line)
         if result.get("error"):
             raise RuntimeError(result["error"])
         return result
@@ -631,8 +640,10 @@ def cancellable_translation(config, batch, context, key, cancel):
     if config["provider"] == "mock":
         return translate_request(config, batch, context, key)
     import sys
-    process = subprocess.Popen([sys.executable, str(ROOT / "worker/translation_client.py")],
-                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    command = ([sys.executable, '--translation-worker'] if getattr(sys, 'frozen', False)
+               else [sys.executable, str(ROOT / "worker/translation_client.py")])
+    process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, text=True, encoding='utf-8', **subprocess_options())
     try:
         process.stdin.write(json.dumps({"config": config, "batch": batch, "context": context, "key": key}) + "\n")
         process.stdin.close()
@@ -724,7 +735,7 @@ def write_ass(project, path):
     width, height = data["meta"]["width"], data["meta"]["height"]
     style = data["style"]
     font_size = max(12, min(100, int(style["fontSize"])))
-    font = "Arial Unicode MS"
+    font = chinese_font()[1]
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {width}
@@ -792,8 +803,7 @@ def export_video(project, output, emit=lambda value: None, cancel=None, start=No
     cancel = cancel or threading.Event()
     if not project.data["cues"]:
         raise ValueError("请先识别字幕。")
-    if not Path("/System/Library/Fonts/Supplemental/Arial Unicode.ttf").exists():
-        raise ValueError("缺少中文字体 Arial Unicode MS，请先配置字体。")
+    font_path, _ = chinese_font()
     output = Path(output).resolve()
     if output.exists():
         raise ValueError("输出已存在，请选择新文件名。")
@@ -807,23 +817,31 @@ def export_video(project, output, emit=lambda value: None, cancel=None, start=No
         raise ValueError("输出磁盘空间不足，请更换目录。")
     ass = project.directory / "render.ass"
     write_ass(project, ass)
+    font_filter = ""
+    if rapid_ocr():
+        font_dir = project.directory / "render-fonts"
+        font_dir.mkdir(exist_ok=True)
+        shutil.copyfile(font_path, font_dir / font_path.name)
+        font_filter = ":fontsdir=render-fonts"
     temporary = output.with_name(output.stem + ".partial.mp4")
     # Relative constant filename avoids FFmpeg filter escaping of user-controlled paths.
-    command = [ffmpeg_path(), "-hide_banner", "-y", "-i", project.data["meta"]["path"], "-vf", "scale=trunc(iw*sar/2)*2:trunc(ih/2)*2,setsar=1,ass=render.ass",
+    command = [ffmpeg_path(), "-hide_banner", "-y", "-i", project.data["meta"]["path"], "-vf", "scale=trunc(iw*sar/2)*2:trunc(ih/2)*2,setsar=1,ass=render.ass" + font_filter,
                "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart"]
     if start is not None:
         command.extend(["-ss", str(start), "-t", str(duration)])
     command.extend(["-progress", "pipe:1", "-nostats", str(temporary)])
     error_path = project.directory / "export-error.log"
     with error_path.open("w") as error:
-        process = subprocess.Popen(command, cwd=project.directory, stdout=subprocess.PIPE, stderr=error, text=True)
+        process = subprocess.Popen(command, cwd=project.directory, stdout=subprocess.PIPE, stderr=error, text=True, encoding='utf-8', **subprocess_options())
+        reader = LineReader(process.stdout)
         try:
             while process.poll() is None:
                 if cancel.is_set():
                     process.terminate()
                     raise Cancelled()
-                if select.select([process.stdout], [], [], .2)[0]:
-                    line = process.stdout.readline().strip()
+                line = reader.get(.2)
+                if line:
+                    line = line.strip()
                     value = ffmpeg_progress_time(line)
                     if value is not None:
                         emit({"stage": "export", "status": "running", "time": value, "total": duration, "message": "正在生成中文字幕视频"})
@@ -867,13 +885,15 @@ def prepare_proxy(project, emit=lambda value: None, cancel=None):
     meta = project.data["meta"]
     command = [ffmpeg_path(), "-hide_banner", "-y", "-i", meta["path"], "-map", "0:v:0", "-map", "0:a:0?", "-vf", "scale=trunc(iw*sar/2)*2:trunc(ih/2)*2,setsar=1", "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", "-progress", "pipe:1", "-nostats", str(temporary)]
     with (project.directory / "proxy-error.log").open("w") as error:
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=error, text=True)
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=error, text=True, encoding='utf-8', **subprocess_options())
+        reader = LineReader(process.stdout)
         try:
             while process.poll() is None:
                 if cancel.is_set():
                     raise Cancelled()
-                if select.select([process.stdout], [], [], .2)[0]:
-                    value = ffmpeg_progress_time(process.stdout.readline().strip())
+                line = reader.get(.2)
+                if line:
+                    value = ffmpeg_progress_time(line.strip())
                     if value is not None:
                         emit({"stage": "proxy", "status": "running", "time": value, "total": meta["duration"], "message": "正在生成兼容播放的预览副本"})
             if process.returncode:

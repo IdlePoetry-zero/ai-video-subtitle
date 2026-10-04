@@ -16,7 +16,9 @@ from PIL import Image
 from worker.core import (VisionOCR, Cancelled, probe, file_fingerprint, frames, crop,
                          signature, validate_roi, normalize, compatible, check_cues)
 
-VERSION = 'progressive-v2'
+from worker.platform_runtime import rapid_ocr, ocr_identity, chinese_font
+
+VERSION = 'progressive-v2' + ('-' + ocr_identity() if rapid_ocr() else '')
 BLANK_GRACE = .16
 RESET_CONFIRM = .12
 COVER_GRACE = .2

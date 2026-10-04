@@ -1,0 +1,12 @@
+-r requirements.lock
+rapidocr-onnxruntime==1.4.4
+onnxruntime==1.30.0
+opencv-python==5.0.0.93
+pyclipper==1.4.0
+shapely==2.1.2
+six==1.17.0
+PyYAML==6.0.3
+tqdm==4.70.1
+flatbuffers==25.12.19
+protobuf==7.36.2
+pyinstaller==6.22.3

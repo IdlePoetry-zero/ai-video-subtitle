@@ -55,7 +55,11 @@ def review(project,cue_id,key='',cancel=None):
     cancel=cancel or threading.Event()
     cue=next(c for c in project.data['cues'] if c['id']==cue_id)
     if cue.get('recognition_mode')!='progressive_hq':raise ValueError('图像复核仅用于高质量模式字幕。')
-    process=subprocess.Popen([sys.executable,str(ROOT/'worker/visual_client.py')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
+    from worker.platform_runtime import subprocess_options
+    command=([sys.executable,'--visual-worker'] if getattr(sys,'frozen',False)
+             else [sys.executable,str(ROOT/'worker/visual_client.py')])
+    process=subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+                             text=True,encoding='utf-8',**subprocess_options())
     try:
         process.stdin.write(json.dumps({'config':project.data['translation'],'cue':cue,'key':key})+'\n');process.stdin.close();deadline=time.monotonic()+100
         while process.poll() is None:

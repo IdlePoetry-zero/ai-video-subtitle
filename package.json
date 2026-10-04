@@ -6,7 +6,7 @@
   "main": "desktop/main.cjs",
   "scripts": {
     "setup": "node scripts/setup.mjs",
-    "test": ".venv/bin/python -m pytest tests -q",
+    "test": "node scripts/test.mjs",
     "test:desktop": "node tests/desktop.mjs",
     "dev": "node scripts/dev.mjs",
     "build": "tsc --noEmit && vite build",
@@ -15,7 +15,9 @@
     "package": "npm run build && electron-packager . SubtitleStudioProgressive --app-bundle-id=com.idlepoetry.subtitle-studio.progressive --platform=darwin --arch=arm64 --out=release-progressive --overwrite --no-asar --ignore='^/(artifacts|projects|release|release-progressive|runtime/(pip-cache|npm-cache|swift-cache|settings.json|worker.log)|tests|\\.git)(/|$)'",
     "test:progressive": "node tests/desktop-progressive.mjs",
     "package:quality": "npm run build && electron-packager . SubtitleStudioQuality --app-bundle-id=com.idlepoetry.subtitle-studio.quality --platform=darwin --arch=arm64 --out=release-quality --overwrite --no-asar --ignore='^/(artifacts|projects|release|release-progressive|release-quality|runtime/(pip-cache|npm-cache|swift-cache|settings.json|worker.log)|tests|\\.git)(/|$)'",
-    "package:dynamic": "npm run build && electron-packager . SubtitleStudioDynamic --app-bundle-id=com.idlepoetry.subtitle-studio.dynamic --platform=darwin --arch=arm64 --out=release-dynamic --no-asar --ignore='^/(artifacts|projects|release[^/]*|runtime/(pip-cache|npm-cache|swift-cache|settings.json|worker.log)|tests|\\.git)(/|$)'"
+    "package:dynamic": "npm run build && electron-packager . SubtitleStudioDynamic --app-bundle-id=com.idlepoetry.subtitle-studio.dynamic --platform=darwin --arch=arm64 --out=release-dynamic --no-asar --ignore='^/(artifacts|projects|release[^/]*|runtime/(pip-cache|npm-cache|swift-cache|settings.json|worker.log)|tests|\\.git)(/|$)'",
+    "package:windows": "node scripts/package_windows.mjs",
+    "test:windows": "python tests/windows_acceptance.py"
   },
   "dependencies": {
     "react": "^19.0.0",
@@ -26,6 +28,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "electron": "^44.5.1",
+    "electron-builder": "26.15.3",
     "playwright": "^1.58.0",
     "typescript": "^5.9.0",
     "vite": "^7.0.0"

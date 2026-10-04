@@ -16,7 +16,9 @@ from worker.core import (VisionOCR, Cancelled, probe, file_fingerprint, frames, 
                          validate_roi, normalize, check_cues)
 from worker.progressive import new_event, relation, event_to_cue
 
-VERSION = 'quality-v3'
+from worker.platform_runtime import rapid_ocr, ocr_identity, chinese_font
+
+VERSION = 'quality-v3' + ('-' + ocr_identity() if rapid_ocr() else '')
 MODE = 'progressive_hq'
 DEFAULTS = {'layout': 'auto', 'exclusions': []}
 

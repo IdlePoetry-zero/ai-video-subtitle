@@ -19,7 +19,9 @@ from worker.progressive import new_event, relation
 from worker.quality import quality_record, quality_cue, best_supported, similar, plausible_growth
 
 MODE = 'dynamic'
-VERSION = 'dynamic-v1'
+from worker.platform_runtime import rapid_ocr, ocr_identity, chinese_font
+
+VERSION = 'dynamic-v1' + ('-' + ocr_identity() if rapid_ocr() else '')
 INTERVAL = .1
 DISCOVERY_INTERVAL = .2
 MISS_GRACE = .16
@@ -301,7 +303,7 @@ def layout(cue,meta,style):
     right,bottom=min(width,round((x+w)*width)+padding),min(height,round((y+h)*height)+padding)
     available_w=max(1,right-left-8);available_h=max(1,bottom-top-6)
     for size in range(max(12,min(100,int(style['fontSize']))),11,-1):
-        font=ImageFont.truetype('/System/Library/Fonts/Supplemental/Arial Unicode.ttf',size)
+        font=ImageFont.truetype(str(chinese_font()[0]),size)
         lines=[]
         for original in cue.get('translation','').splitlines() or ['']:
             line=''
@@ -328,7 +330,7 @@ WrapStyle: 2
 ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
-Style: Chinese,Arial Unicode MS,36,{ass_color(style['color'])},&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,1,0,5,0,0,0,1
+Style: Chinese,{chinese_font()[1]},36,{ass_color(style['color'])},&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,1,0,5,0,0,0,1
 [Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 '''
