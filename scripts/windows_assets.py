@@ -5,6 +5,7 @@ import importlib.metadata as metadata
 import json
 import shutil
 import subprocess
+import sys
 import urllib.request
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -48,6 +49,12 @@ def main():
     # Wheel model conversion preserves PaddleOCR's Apache-2.0 attribution.
     download('runtime/licenses/RapidOCR-APACHE-2.0.txt', 'https://raw.githubusercontent.com/RapidAI/RapidOCR/v1.4.4/LICENSE')
     download('runtime/licenses/PaddleOCR-APACHE-2.0.txt', 'https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/v2.7.3/LICENSE')
+    python_tag = '.'.join(map(str,sys.version_info[:3]))
+    download('runtime/licenses/Python-PSF.txt', f'https://raw.githubusercontent.com/python/cpython/v{python_tag}/LICENSE')
+    for name in ['GPLv2','GPLv3','LGPLv2.1']:
+        download('runtime/licenses/' + name + '.txt', 'https://raw.githubusercontent.com/FFmpeg/FFmpeg/n7.1/COPYING.' + name)
+    import av
+    (folder/'pyav-build.json').write_text(json.dumps({'version':av.__version__,'libraries':av.library_versions},indent=2),encoding='utf-8')
     import imageio_ffmpeg
     ffmpeg = subprocess.check_output([imageio_ffmpeg.get_ffmpeg_exe(),'-version'],text=True,encoding='utf-8')
     (folder/'ffmpeg-build.txt').write_text(ffmpeg,encoding='utf-8')
