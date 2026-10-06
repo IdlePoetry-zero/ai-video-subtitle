@@ -13,6 +13,7 @@ __pycache__/
 release-progressive/
 release-quality/
 release-dynamic/
+release-appearance/
 
 .venv-windows-eval/
 release-windows/

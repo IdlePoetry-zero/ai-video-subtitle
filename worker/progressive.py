@@ -17,6 +17,7 @@ from worker.core import (VisionOCR, Cancelled, probe, file_fingerprint, frames, 
                          signature, validate_roi, normalize, compatible, check_cues)
 
 from worker.platform_runtime import rapid_ocr, ocr_identity, chinese_font
+from worker.appearance import remember_text_box
 
 VERSION = 'progressive-v2' + ('-' + ocr_identity() if rapid_ocr() else '')
 BLANK_GRACE = .16
@@ -71,6 +72,7 @@ def record(event, timestamp, result):
     event['last_seen'] = timestamp
     if not text:
         return
+    remember_text_box(event, result)
     values = event['variants']
     stats = values.setdefault(text, {'count': 0, 'confidence': 0., 'first': timestamp, 'last': timestamp})
     stats['count'] += 1
@@ -109,7 +111,7 @@ def event_to_cue(event, end, display='first'):
             'raw_ocr': list(event['variants']), 'growth': [dict(text=text, **values) for text, values in event['variants'].items()],
             'recognition_mode': 'progressive', 'complete_supported': stable,
             'confidence': stats.get('confidence', 0), 'translation': '', 'translation_status': 'missing',
-            'box': event['roi'], 'screenshot': event['screenshot'], 'manual': False,
+            'box': event['roi'], 'source_box': event.get('source_box'), 'screenshot': event['screenshot'], 'manual': False,
             'manual_translation': False, 'manual_time': False, 'revision': 0, 'recognition_issue': issue,
             'transient_changes': event['transient_changes'], 'issues': []}
 

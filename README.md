@@ -89,6 +89,10 @@ DeepSeek V4.1 Flash 使用 `https://api.deepseek.com` 和模型名 `deepseek-fla
 
 术语表每行一个约定，例如 `Subtitle Studio = 字幕工作室`。真实适配器带上下文与术语表分批请求，检查字幕 ID、数量、空译文和重复返回；失败可以局部重试。人工译文受到保护。
 
+## 中文字幕外观
+
+新增“贴合原字幕”覆盖范围和“局部去字 · 无背景条（实验）”，保留原完整区域覆盖与上方显示。新项目默认贴合，旧项目自行切换；复杂画面先生成预览。详见 [使用与限制](docs/SUBTITLE_APPEARANCE.md)。macOS 独立新版可用 `npm run package:appearance` 构建，不覆盖已有应用包。
+
 ## 验证与样本
 
 ```sh

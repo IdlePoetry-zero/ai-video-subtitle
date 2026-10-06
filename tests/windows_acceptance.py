@@ -194,6 +194,22 @@ def main():
                                   'cues':len(cues),'frames':count,'output':str(output),'metadata':metadata,
                                   'rendered_chinese_ocr':rendered['text'],
                                   'cancel_resume':mode=='dynamic'}
+            if mode == 'progressive_hq':
+                rpc.request('update', {'changes': {'style': {**project['style'], 'mode': 'delogo', 'coverArea': 'text'}}})
+                repaired = directory / '局部去字预览.mp4'
+                rpc.job('preview', {'output': str(repaired), 'start': 2, 'end': 4})
+                repaired_meta = probe(repaired)
+                assert (repaired_meta['width'], repaired_meta['height']) == (1280, 720)
+                assert abs(repaired_meta['duration'] - 2) < .15 and repaired_meta['audio']
+                assert 'delogo=' in (directory / 'render-filter.txt').read_text('utf-8')
+                assert 'Dialogue: 0,' not in (directory / 'render.ass').read_text('utf-8')
+                verifier = VisionOCR()
+                try:
+                    repaired_text = verifier.recognize(crop(next(frames(repaired, 1, 1.05, .05))[1], [.03,.72,.93,.16]))
+                finally:
+                    verifier.close()
+                assert any('\u4e00' <= char <= '\u9fff' for char in repaired_text['text']), repaired_text
+                report['local_repair'] = {'passed': True, 'output': str(repaired), 'metadata': repaired_meta}
         assert API.calls,'Frozen translation child did not call HTTP fixture'
         report['http_translation_requests']=len(API.calls);report['passed']=True
     finally:

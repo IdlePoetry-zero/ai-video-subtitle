@@ -26,6 +26,7 @@ import numpy as np
 from PIL import Image
 
 from worker.platform_runtime import ROOT, LineReader, rapid_ocr, ocr_identity, chinese_font, subprocess_options, external_process, remove_temporary
+from worker.appearance import pixel_box, remember_text_box, local_repair_filters
 OCR_VERSION = ocr_identity()
 
 
@@ -231,7 +232,7 @@ class Project:
         self.data = {"version": 1, "id": str(uuid.uuid4()), "meta": meta, "fingerprint": fingerprint,
                      "fingerprint_version": 1, "roi": [.04, .76, .92, .21], "regions": [], "language": "en-US", "cues": [],
                      "scan": {}, "recognition_mode": "standard", "recognition_results": {}, "progressive": {"display": "first"},
-                     "style": {"mode": "cover", "fontSize": 36, "background": "#101820", "color": "#ffffff", "padding": 10, "maxCps": 12, "maxChars": 44, "maxLines": 2},
+                     "style": {"mode": "cover", "coverArea": "text", "fontSize": 36, "background": "#101820", "color": "#ffffff", "padding": 4, "maxCps": 12, "maxChars": 44, "maxLines": 2},
                      "translation": {"provider": "mock", "baseUrl": "http://localhost:11434", "model": "", "glossary": ""},
                      "task": {"stage": "ready", "status": "idle"}, "outputs": []}
         self.save()
@@ -301,6 +302,13 @@ class Project:
             if "translation" in changes and "apiKey" in changes["translation"]:
                 raise ValueError("密钥不能写入项目。")
             if "style" in changes:
+                style = changes['style']
+                if style.get('mode', 'cover') not in ('cover', 'above', 'delogo') or style.get('coverArea', 'region') not in ('text', 'region'):
+                    raise ValueError('字幕显示方式或覆盖范围无效。')
+                for name, limits in {'padding': (0, 50), 'fontSize': (12, 100)}.items():
+                    value = style.get(name, self.data['style'][name])
+                    if not isinstance(value, (int, float)) or not math.isfinite(value) or not limits[0] <= value <= limits[1]:
+                        raise ValueError('字幕字号或遮盖边距无效。')
                 for name, limits in {"maxCps": (1, 50), "maxChars": (1, 200), "maxLines": (1, 4)}.items():
                     value = changes["style"].get(name, {"maxCps":12,"maxChars":44,"maxLines":2}[name])
                     if not isinstance(value, (int, float)) or not limits[0] <= value <= limits[1]:
@@ -363,7 +371,7 @@ def event_to_cue(event):
     return {"id": event["id"], "start": round(event["start"], 3), "end": round(event["end"], 3),
             "original_start": event["start"], "original_end": event["end"], "source": best,
             "raw_ocr": list(counts), "confidence": counts[best]["confidence"], "translation": "",
-            "translation_status": "missing", "box": event["roi"], "screenshot": event["screenshot"],
+            "translation_status": "missing", "box": event["roi"], "source_box": event.get('source_box'), "screenshot": event["screenshot"],
             "manual": False, "manual_translation": False, "revision": 0,
             "recognition_issue": "多帧识别存在差异" if len(counts) > 1 else ("文字识别置信度较低" if counts[best]["confidence"] < .6 else ""), "issues": []}
 
@@ -450,6 +458,7 @@ def scan_standard(project, emit=lambda value: None, cancel=None, start=0., end=N
                               "roi": roi, "screenshot": screenshot, "variants": {}}
                 active["end"] = min(end, timestamp + .1)
                 if did_ocr:
+                    remember_text_box(active, last_result)
                     variant = active["variants"].setdefault(text, {"count": 0, "confidence": 0.})
                     variant["count"] += 1
                     variant["confidence"] = max(variant["confidence"], last_result["confidence"])
@@ -750,10 +759,7 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 """
     events = []
     for cue in data["cues"]:
-        x, y, w, h = cue.get("box", data["roi"])
-        padding = max(0, min(50, int(style["padding"])))
-        left, top = max(0, round(x * width) - padding), max(0, round(y * height) - padding)
-        right, bottom = min(width, round((x + w) * width) + padding), min(height, round((y + h) * height) + padding)
+        left, top, right, bottom = pixel_box(cue, data['meta'], style, data['roi'])
         if style["mode"] == "cover":
             drawing = f"{{\\an7\\pos({left},{top})\\bord0\\shad0\\1c{ass_color(style['background'])}\\p1}}m 0 0 l {right-left} 0 l {right-left} {bottom-top} l 0 {bottom-top}"
             for cover_start, cover_end in cue.get("cover_intervals", [[cue.get('original_start', cue['start']), cue.get('original_end', cue['end'])]]):
@@ -761,15 +767,41 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
         text = cue.get("translation", "").strip()
         if not text:
             raise ValueError("存在未翻译字幕，请先翻译或编辑中文，再导出。")
-        # Explicit wrap at an approximate number of glyphs fitting the confirmed region.
+        # Tight covers use measured font widths and reduce the Chinese font to fit
+        # rather than expanding the background into the surrounding picture.
+        fitted = None
+        if style['mode'] != 'above' and (style.get('coverArea') == 'text' or style['mode'] == 'delogo'):
+            from worker.dynamic import layout
+            fitted = layout({**cue, 'box': cue.get('box', data['roi'])}, data['meta'], style)
+            if not fitted['fits']:
+                # Very short source words/prefixes can be narrower than one
+                # Chinese glyph. Let outlined Chinese extend beyond the cover;
+                # never enlarge the painted/erased area to fit the translation.
+                fitted = layout({**cue, 'box': cue.get('box', data['roi'])}, data['meta'],
+                                {**style, 'mode': 'cover', 'coverArea': 'region'})
+                if not fitted['fits']:
+                    raise ValueError('译文过长，请缩小字号、精简译文或调整字幕区域。')
+        # Retain legacy projects' approximate wrapping and layout.
         max_chars = max(8, int((right - left - 20) / font_size))
         text_lines = []
         for line in text.splitlines():
             text_lines.extend(line[index:index + max_chars] for index in range(0, len(line), max_chars))
         text = "\n".join(text_lines)
+        if fitted:
+            text = fitted['text']
+            text_lines = text.splitlines()
+        cue_font_size = fitted['font_size'] if fitted else font_size
         mid_x = round((left + right) / 2)
-        mid_y = round((top + bottom) / 2) if style["mode"] == "cover" else max(font_size * len(text_lines), top - font_size)
-        positioned = f"{{\\an5\\pos({mid_x},{mid_y})}}" + ass_text(text)
+        mid_y = round((top + bottom) / 2) if style["mode"] in ('cover', 'delogo') else max(cue_font_size * len(text_lines), top - cue_font_size)
+        if fitted:
+            from PIL import ImageFont
+            font_metrics = ImageFont.truetype(str(chinese_font()[0]), cue_font_size)
+            half_w = max(font_metrics.getlength(line) for line in text_lines) / 2 + 2
+            half_h = len(text_lines) * cue_font_size * 1.3 / 2 + 2
+            mid_x = round(max(half_w, min(width - half_w, mid_x)))
+            mid_y = round(max(half_h, min(height - half_h, mid_y)))
+        sizing = f'\\fs{cue_font_size}\\q2' if fitted else ''
+        positioned = f"{{\\an5\\pos({mid_x},{mid_y}){sizing}}}" + ass_text(text)
         events.append(f"Dialogue: 1,{ass_time(cue['start'])},{ass_time(cue['end'])},Chinese,,0,0,0,,{positioned}")
     Path(path).write_text(header + "\n".join(events) + "\n", encoding="utf-8")
 
@@ -825,7 +857,16 @@ def export_video(project, output, emit=lambda value: None, cancel=None, start=No
         font_filter = ":fontsdir=render-fonts"
     temporary = output.with_name(output.stem + ".partial.mp4")
     # Relative constant filename avoids FFmpeg filter escaping of user-controlled paths.
-    command = [ffmpeg_path(), "-hide_banner", "-nostdin", "-y", "-i", project.data["meta"]["path"], "-vf", "scale=trunc(iw*sar/2)*2:trunc(ih/2)*2,setsar=1,ass=render.ass" + font_filter,
+    video_filters = ['scale=trunc(iw*sar/2)*2:trunc(ih/2)*2', 'setsar=1']
+    repair_filters = local_repair_filters(project.data, start, end)
+    if repair_filters:
+        supported = external_process([ffmpeg_path(), '-hide_banner', '-filters'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8').communicate()[0]
+        if not re.search(r'\bdelogo\s', supported):
+            raise ValueError('当前 FFmpeg 不支持局部去字，请使用背景覆盖或更换 FFmpeg。')
+        video_filters.extend(repair_filters)
+    video_filters.append('ass=render.ass' + font_filter)
+    (project.directory / 'render-filter.txt').write_text(','.join(video_filters), encoding='utf-8')
+    command = [ffmpeg_path(), "-hide_banner", "-nostdin", "-y", "-i", project.data["meta"]["path"], "-filter_script:v", 'render-filter.txt',
                "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart"]
     if start is not None:
         command.extend(["-ss", str(start), "-t", str(duration)])

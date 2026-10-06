@@ -10,7 +10,7 @@ args = [sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean', '--onedir
         '--workpath', 'build-windows/work', '--specpath', 'build-windows']
 for package in ['rapidocr_onnxruntime', 'onnxruntime', 'av', 'imageio_ffmpeg']:
     args += ['--collect-all', package]
-for module in ['server', 'core', 'platform_runtime', 'ocr_rapid', 'translation_client',
+for module in ['server', 'core', 'appearance', 'platform_runtime', 'ocr_rapid', 'translation_client',
                'dynamic', 'progressive', 'quality', 'visual_review', 'visual_client']:
     args += ['--hidden-import', 'worker.' + module]
 args += ['worker/entry.py']

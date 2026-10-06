@@ -11,8 +11,9 @@ const windowsApp = process.platform === 'win32';
 app.setName(windowsApp ? 'SubtitleStudioWindows' : 'SubtitleStudioProgressive');
 const qualityApp = process.execPath.includes('SubtitleStudioQuality.app') || process.env.STUDIO_QUALITY_APP === '1';
 const dynamicApp = process.execPath.includes('SubtitleStudioDynamic.app') || process.env.STUDIO_DYNAMIC_APP === '1';
-const isolatedApp = windowsApp || qualityApp || dynamicApp;
-app.setPath('userData', process.env.STUDIO_TEST_MODE === '1' && process.env.STUDIO_TEST_USER_DATA || path.join(app.getPath('appData'), windowsApp ? 'SubtitleStudioWindows' : dynamicApp ? 'SubtitleStudioDynamic' : qualityApp ? 'SubtitleStudioQuality' : 'SubtitleStudioProgressive'));
+const appearanceApp = process.execPath.includes('SubtitleStudioAppearance.app') || process.env.STUDIO_APPEARANCE_APP === '1';
+const isolatedApp = windowsApp || qualityApp || dynamicApp || appearanceApp;
+app.setPath('userData', process.env.STUDIO_TEST_MODE === '1' && process.env.STUDIO_TEST_USER_DATA || path.join(app.getPath('appData'), windowsApp ? 'SubtitleStudioWindows' : appearanceApp ? 'SubtitleStudioAppearance' : dynamicApp ? 'SubtitleStudioDynamic' : qualityApp ? 'SubtitleStudioQuality' : 'SubtitleStudioProgressive'));
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'studio-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 const root = path.resolve(__dirname, '..');
@@ -91,6 +92,12 @@ function loadSettings() {
     if (dynamicApp && !fs.existsSync(settingsFile)) {
       const previous = path.join(app.getPath('appData'), 'SubtitleStudioQuality', 'settings.json');
       if (fs.existsSync(previous)) source = previous;
+    }
+    if (appearanceApp && !fs.existsSync(settingsFile)) {
+      for (const name of ['SubtitleStudioDynamic', 'SubtitleStudioQuality']) {
+        const previous = path.join(app.getPath('appData'), name, 'settings.json');
+        if (fs.existsSync(previous)) { source = previous; break; }
+      }
     }
     const stored = JSON.parse(fs.readFileSync(source, 'utf8'));
     settings = { ...settings, ...stored.config };

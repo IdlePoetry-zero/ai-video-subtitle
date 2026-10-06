@@ -17,6 +17,7 @@ from worker.core import (VisionOCR, Cancelled, frames, crop, probe, file_fingerp
                          normalize, validate_roi, ass_color, ass_text, ass_time, srt_time)
 from worker.progressive import new_event, relation
 from worker.quality import quality_record, quality_cue, best_supported, similar, plausible_growth
+from worker.appearance import pixel_box
 
 MODE = 'dynamic'
 from worker.platform_runtime import rapid_ocr, ocr_identity, chinese_font
@@ -298,9 +299,8 @@ def scan_dynamic(project,emit=lambda value:None,cancel=None,start=0.,end=None,fo
 
 
 def layout(cue,meta,style):
-    width,height=meta['width'],meta['height'];x,y,w,h=cue['box'];padding=max(0,min(50,int(style['padding'])))
-    left,top=max(0,round(x*width)-padding),max(0,round(y*height)-padding)
-    right,bottom=min(width,round((x+w)*width)+padding),min(height,round((y+h)*height)+padding)
+    width,height=meta['width'],meta['height']
+    left,top,right,bottom=pixel_box(cue,meta,style,cue['box'])
     available_w=max(1,right-left-8);available_h=max(1,bottom-top-6)
     for size in range(max(12,min(100,int(style['fontSize']))),11,-1):
         font=ImageFont.truetype(str(chinese_font()[0]),size)
@@ -343,7 +343,7 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
         if style['mode']=='cover':
             drawing=f"{{\\an7\\pos({left},{top})\\bord0\\shad0\\1c{ass_color(style['background'])}\\p1}}m 0 0 l {right-left} 0 l {right-left} {bottom-top} l 0 {bottom-top}"
             for a,b in visible_intervals(cue):events.append(f'Dialogue: 0,{ass_time(a)},{ass_time(b)},Chinese,,0,0,0,,{drawing}')
-        else:
+        elif style['mode']=='above':
             text_height=len(fitted['text'].splitlines())*fitted['font_size']*1.3
             mid_y=round(max(text_height/2+3,min(height-text_height/2-3,top-text_height/2-4)))
         text=f"{{\\an5\\pos({mid_x},{mid_y})\\fs{fitted['font_size']}\\q2}}"+ass_text(fitted['text'])
