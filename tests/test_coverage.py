@@ -124,3 +124,11 @@ def test_cancelled_gap_review_saves_partial_progress_without_filling():
     p=Project();cancel=threading.Event();cancel.set()
     with pytest.raises(Cancelled):recover_short_gaps(p,cancel=cancel,ocr=OCR())
     assert p.saved and c['visible_intervals']==[[1,1.2],[1.4,2]]
+
+
+def test_gap_and_audit_do_not_confuse_decimal_or_lost_apostrophe():
+    from worker.coverage import complete_read
+    for observed,expected in [('Spend 12 dollars.','Spend 1.2 dollars.'),("I cant do this.","I can't do this.")]:
+        items=[{'text':observed,'box':BOX,'confidence':1.}]
+        assert not complete_read(items,expected)
+        assert not source_matches(observed,expected)

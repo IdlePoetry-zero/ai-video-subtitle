@@ -4,14 +4,15 @@ The audit covers what OCR actually read, not unknowable ground truth. Its flags
 remain visible for review and are never silently translated or marked verified.
 """
 from difflib import SequenceMatcher
-from worker.quality import similar, literal_reference
+from worker.quality import similar, literal_reference, protected
 
 
 def complete_read(items, source):
     """Require the whole paragraph, including numbers and negation, in this frame."""
     lines=source.splitlines()
     reads=[i['text'] for i in sorted(items,key=lambda i:(i['box'][1],i['box'][0])) if i['confidence']>=.8]
-    return bool(reads) and canonical(' '.join(reads))==canonical(' '.join(lines))
+    observed=' '.join(reads);expected=' '.join(lines)
+    return bool(reads) and protected(observed)==protected(expected) and canonical(observed)==canonical(expected)
 
 
 def recover_short_gaps(project, emit=lambda value:None, cancel=None, ocr=None):
@@ -104,8 +105,9 @@ def source_matches(observed, source):
     observed_text=observed
     observed = canonical(observed)
     lines = [source, *source.splitlines()]
-    return any(observed in canonical(line) or canonical(line) in observed or
-               similar(observed_text, line) for line in lines if canonical(line))
+    return any(protected(observed_text)==protected(line) and
+               (observed in canonical(line) or canonical(line) in observed or
+                similar(observed_text, line)) for line in lines if canonical(line))
 
 
 def audit_observations(cues, observations):
