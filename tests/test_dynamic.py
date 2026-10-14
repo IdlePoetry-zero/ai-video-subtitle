@@ -79,6 +79,37 @@ def test_missing_observation_does_not_create_a_permanent_cover():
  assert not any(a<=3<b for a,b in visible_intervals(out[0]))
 
 
+def test_long_chinese_annotation_does_not_expand_original_cover(tmp_path):
+ p=Project.create(VIDEO,tmp_path/'annotation')
+ try:
+  p.update({'recognition_mode':'dynamic','dynamic':{'exclusions':[],'profile':'enhanced'}})
+  c=cue('A small label.',box=[.5,.6,.025,.04]);c.update(translation='需要完整保留的中文\n第二行中文\n第三行',translation_status='translated')
+  p.data['cues']=[c]
+  original_box=c['box'][:]
+  bounded=layout(c,p.data['meta'],p.data['style'])
+  assert not bounded['fits']
+  annotation=layout(c,p.data['meta'],p.data['style'],True)
+  assert annotation['fits'] and annotation['annotation']
+  assert annotation['box']==bounded['box']
+  path=p.directory/'annotation.ass';write_ass(p,path)
+  assert 'Dialogue: 0,' not in path.read_text()  # No larger opaque backdrop.
+  assert c['box']==original_box and c['render_mode']=='outline'
+ finally:p.close()
+
+
+def test_tiny_weak_text_preserves_original_in_both_srt_and_video(tmp_path):
+ p=Project.create(VIDEO,tmp_path/'tiny')
+ try:
+  p.update({'recognition_mode':'dynamic','dynamic':{'exclusions':[],'profile':'enhanced'}})
+  tiny=cue('Unclear label.',box=[.3,.6,.03,.005]);tiny.update(confidence=.5,translation='不可靠标记',translation_status='translated')
+  clear=cue('Clear sentence.',start=2);clear.update(translation='清晰字幕',translation_status='translated')
+  p.data['cues']=[tiny,clear]
+  export_srt(p,p.directory/'captions.srt');write_ass(p,p.directory/'captions.ass')
+  assert not tiny['dynamic_verified'] and tiny['translation'] not in (p.directory/'captions.srt').read_text()
+  assert clear['translation'] in (p.directory/'captions.srt').read_text()
+ finally:p.close()
+
+
 def test_four_modes_results_and_manual_box_validation_are_isolated(tmp_path):
  p=Project.create(VIDEO,tmp_path/'p')
  try:

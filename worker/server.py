@@ -54,6 +54,7 @@ def start_job(kind, params):
         send({"event": "progress", "job": job_id, **value})
 
     def run():
+        global job
         result = None
         error = None
         status = "complete"
@@ -90,9 +91,14 @@ def start_job(kind, params):
             if error:
                 p.data["task"]["error"] = error
             p.save()
+            completed_snapshot=p.snapshot()
+            # All project writes are finished before advertising completion.
+            # A client may immediately resume after the terminal notification;
+            # the old thread can still be flushing stdout at that instant.
+            job=None
             send({"event": "job", "job": job_id, "stage": kind, "status": status,
                   "result": result if kind in ("recommend", "preview", "export", "proxy") else None,
-                  "error": error, "project": p.snapshot()})
+                  "error": error, "project": completed_snapshot})
 
     job = threading.Thread(target=run, daemon=True)
     job.start()

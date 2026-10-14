@@ -7,6 +7,62 @@ from difflib import SequenceMatcher
 from worker.quality import similar, literal_reference
 
 
+def complete_read(items, source):
+    """Require the whole paragraph, including numbers and negation, in this frame."""
+    lines=source.splitlines()
+    reads=[i['text'] for i in sorted(items,key=lambda i:(i['box'][1],i['box'][0])) if i['confidence']>=.8]
+    return bool(reads) and canonical(' '.join(reads))==canonical(' '.join(lines))
+
+
+def recover_short_gaps(project, emit=lambda value:None, cancel=None, ocr=None):
+    """Fill only gaps whose EVERY source frame independently reads the same text.
+
+    No interpolation, boundary extension, text similarity or pixel-only votes.
+    A blank, incomplete/new sentence or hard scene transition vetoes the gap.
+    """
+    import threading
+    import numpy as np
+    from PIL import Image
+    from worker.core import VisionOCR, frames, crop, Cancelled, file_fingerprint
+    from worker.dynamic import eligible, visible_intervals, expanded, deduplicate
+    data=project.data;meta=data['meta'];cancel=cancel or threading.Event()
+    if data.get('recognition_mode')!='dynamic' or data.get('dynamic',{}).get('profile')!='enhanced':return
+    if data.get('fingerprint_version')==1 and file_fingerprint(meta['path'])!=data['fingerprint']:raise ValueError('原视频内容已经变化，请创建新项目。')
+    finalize_enhanced(data['cues'])
+    owned=ocr is None;ocr=ocr or VisionOCR();checked=restored=0
+    try:
+        for cue in data['cues']:
+            if cancel.is_set():raise Cancelled()
+            if not eligible(cue) or cue.get('manual') or cue.get('dedup_original_intervals') or len(canonical(cue['source']))<10:continue
+            spans=visible_intervals(cue);out=[spans[0][:]] if spans else []
+            for left,right in zip(spans,spans[1:]):
+                a,b=left[1],right[0];evidence=[];valid=0<b-a<=.301;previous=None
+                if valid:
+                    checked+=1
+                    for at,image in frames(meta['path'],max(0.,a-1/max(1.,meta['fps'])),b+1/max(1.,meta['fps']),0.,meta):
+                        if cancel.is_set():raise Cancelled()
+                        scene=np.asarray(Image.fromarray(image).resize((64,36)).convert('L'),dtype=float)/255
+                        if previous is not None and np.mean(np.abs(scene-previous))>.25:valid=False;break
+                        previous=scene
+                        if not a<=at<b:continue
+                        result=ocr.recognize(crop(image,expanded(cue['box'],.015,.015)),data['language'])
+                        if not complete_read(deduplicate(result['items'],True),cue['source']):valid=False;break
+                        evidence.append(round(at,6))
+                    valid=valid and len(evidence)>=2
+                if valid:
+                    out[-1][1]=right[1];restored+=1
+                    cue.setdefault('gap_recovery',[]).append({'start':a,'end':b,'frame_times':evidence,'method':'every-source-frame-exact-ocr'})
+                else:out.append(right[:])
+            if out!=spans:
+                cue.setdefault('gap_recovery_original_intervals',[s[:] for s in spans])
+                cue.update(visible_intervals=out,cover_intervals=[s[:] for s in out])
+            if checked:emit({'stage':'audit','status':'running','message':f'逐帧复核短时漏显：已检查 {checked} 处，恢复 {restored} 处'})
+        data.setdefault('scan',{})['gap_recovery_report']={'checked':checked,'restored':restored,'method':'逐帧完整原文一致才恢复；空白、换句与切镜保留缺口。'}
+    finally:
+        project.save()
+        if owned:ocr.close()
+
+
 def audit_source(project, emit=lambda value:None, cancel=None, start=0., end=None):
     """Independent native OCR pass, including intervals with no existing event."""
     import threading
@@ -21,6 +77,7 @@ def audit_source(project, emit=lambda value:None, cancel=None, start=0., end=Non
     config={**DEFAULTS,**data.get('dynamic',{})};cancel=cancel or threading.Event()
     observations=[];ocr=VisionOCR()
     try:
+        recover_short_gaps(project,emit,cancel,ocr)
         for at,image in frames(meta['path'],start,end,1.,meta):
             if cancel.is_set():raise Cancelled()
             scale=min(1.,1280/image.shape[1])
@@ -68,13 +125,19 @@ def audit_observations(cues, observations):
 
 
 def finalize_enhanced(cues):
-    from worker.dynamic import eligible, visible_intervals, intersection, area, union, bounded
+    from worker.dynamic import eligible, visible_intervals, intersection, area, union, bounded, deduplicate
     automatic = [c for c in cues if eligible(c) and not c.get('manual')]
     for cue in automatic:
         if literal_reference(cue['source']):
             cue.update(ignored=True,recognition_issue='网址保留原样，不自动翻译或覆盖。')
             continue
         items = cue.get('detection_items', [])
+        cleaned=deduplicate(items,True) if all('confidence' in i for i in items) else items
+        if items and len(cleaned)<len(items) and canonical(' '.join(i['text'] for i in items))==canonical(cue['source']):
+            cue['source_before_physical_dedup']=cue['source']
+            cue['source']='\n'.join(i['text'] for i in sorted(cleaned,key=lambda i:(i['box'][1],i['box'][0])))
+            cue['detection_items']=items=cleaned
+            if cue.get('translation'):cue['translation_status']='stale'
         if items:
             actual = bounded(union([i['box'] for i in items]))
             original = cue['box']

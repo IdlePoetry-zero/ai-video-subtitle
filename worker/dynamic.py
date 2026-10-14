@@ -83,7 +83,8 @@ def deduplicate(items, enhanced=False):
                 fragment=bool(shorter) and (shorter in longer or SequenceMatcher(None,shorter,longer).find_longest_match().size/len(shorter)>.85)
                 # These are competing reads of one physical row in one frame,
                 # not number/negation changes across time. Never concatenate.
-                duplicated=same_scale and (overlap/max(1e-9,area(a)+area(b)-overlap)>.75 or (containment>.88 and fragment))
+                exact_row=first==second and bool(first) and containment>.65 and abs(a[1]+a[3]/2-b[1]-b[3]/2)<.4*max(a[3],b[3]) and max(a[3],b[3])/max(1e-9,min(a[3],b[3]))<2.5
+                duplicated=exact_row or (same_scale and (overlap/max(1e-9,area(a)+area(b)-overlap)>.75 or (containment>.88 and fragment)))
             else:
                 duplicated=containment>.78 and (similar(item['text'],other['text']) or relation(item['text'],other['text']) in ('grow','shrink'))
             if duplicated:break
@@ -420,9 +421,13 @@ def scan_dynamic(project,emit=lambda value:None,cancel=None,start=0.,end=None,fo
                 checkpoint['calls']+=ocr.calls;ocr.calls=0;data['cues'].sort(key=lambda c:(c['start'],c['box'][1],c['box'][0]));project.save()
                 emit({'stage':'scan','status':'running','time':at,'total':end,'count':len(data['cues']),'objects':[{'id':t['id'],'box':t['box']} for t in tracker.state['tracks']], 'message':f"全画面识别：当前 {len(tracker.state['tracks'])} 个文字对象"});saved=time.monotonic()
         data['cues'].extend(tracker.finish(end))
+        # OCR is finished: a cancellation during gap review resumes review,
+        # without rediscovering the final frames as duplicate new events.
+        checkpoint['cursor']=end
         if config['profile']=='enhanced':
-            from worker.coverage import finalize_enhanced, audit_observations
+            from worker.coverage import finalize_enhanced, audit_observations, recover_short_gaps
             finalize_enhanced(data['cues'])
+            recover_short_gaps(project,lambda value:emit({**value,'stage':'scan'}),cancel,ocr)
             checkpoint['coverage_report']=audit_observations(data['cues'],checkpoint.get('coverage_observations',[]))
         checkpoint.update(cursor=end,status='complete');data['cues'].sort(key=lambda c:(c['start'],c['box'][1],c['box'][0]));check_dynamic_cues(data['cues'],data['style']);return project.snapshot()
     except Cancelled:checkpoint['status']='cancelled';raise
@@ -431,7 +436,7 @@ def scan_dynamic(project,emit=lambda value:None,cancel=None,start=0.,end=None,fo
         checkpoint['calls']+=ocr.calls;checkpoint['elapsed']=checkpoint.get('elapsed',0)+time.monotonic()-started;project.save();ocr.close()
 
 
-def layout(cue,meta,style):
+def layout(cue,meta,style,allow_annotation=False):
     width,height=meta['width'],meta['height']
     left,top,right,bottom=pixel_box(cue,meta,style,cue['box'])
     available_w=max(1,right-left-8);available_h=max(1,bottom-top-6)
@@ -445,7 +450,32 @@ def layout(cue,meta,style):
                 line+=char
             lines.append(line)
         if max((font.getlength(line) for line in lines),default=0)<=available_w and len(lines)*size*1.3<=available_h:return {'box':[left,top,right,bottom],'font_size':size,'text':'\n'.join(lines),'fits':True}
+    if allow_annotation:
+        # A separate transparent text box never expands the original cover.
+        size=min(24,max(12,int(style['fontSize'])))
+        font=ImageFont.truetype(str(chinese_font()[0]),size)
+        max_width=max(1,min(width-12,max(80,width*.4)));lines=[]
+        for original in cue.get('translation','').splitlines() or ['']:
+            line=''
+            for char in original:
+                if line and font.getlength(line+char)>max_width:lines.append(line);line=''
+                line+=char
+            lines.append(line)
+        text_width=min(width-8,max(24,math.ceil(max((font.getlength(line) for line in lines),default=0))+8))
+        text_height=math.ceil(len(lines)*size*1.3)+6
+        if text_height<=height-8:
+            x=max(4,min(width-text_width-4,(left+right-text_width)/2))
+            y=top-text_height-4 if top>=text_height+8 else min(height-text_height-4,bottom+4)
+            return {'box':[left,top,right,bottom],'text_box':[x,y,x+text_width,y+text_height],
+                    'font_size':size,'text':'\n'.join(lines),'fits':True,'annotation':True}
     return {'box':[left,top,right,bottom],'font_size':12,'text':cue.get('translation',''),'fits':False}
+
+
+def prepare_presentation(project):
+    if project.data.get('dynamic',{}).get('profile')!='enhanced':return
+    for cue in project.data['cues']:
+        if eligible(cue) and not cue.get('manual') and cue['box'][3]*project.data['meta']['height']<12 and cue.get('confidence',0)<.8:
+            cue.update(dynamic_verified=False,recognition_issue='文字过小且证据较弱，保留原画；请校对并确认。')
 
 
 def check_dynamic_cues(cues,style=None):
@@ -454,6 +484,7 @@ def check_dynamic_cues(cues,style=None):
 
 
 def write_dynamic_ass(project,path):
+    prepare_presentation(project)
     data=project.data;width,height=data['meta']['width'],data['meta']['height'];style=data['style'];events=[]
     header=f'''[Script Info]
 ScriptType: v4.00+
@@ -471,13 +502,18 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
         if not eligible(cue):continue
         if not cue.get('translation','').strip() or cue.get('translation_status')=='stale':raise ValueError('存在已确认但尚未完成翻译的事件，请先翻译或校对。')
         cue_style={**style,'mode':cue.get('render_mode',style['mode']) if style['mode']!='above' else 'above'}
-        fitted=layout(cue,data['meta'],cue_style)
+        enhanced=data.get('dynamic',{}).get('profile')=='enhanced' and not cue.get('manual')
+        fitted=layout(cue,data['meta'],cue_style,enhanced)
         if not fitted['fits']:raise ValueError('译文无法放入字幕框，请调整区域、字号或译文后导出。')
         left,top,right,bottom=fitted['box'];mid_x=(left+right)//2;mid_y=(top+bottom)//2
-        if cue_style['mode']=='cover':
+        if fitted.get('annotation'):
+            box=fitted['text_box']
+            cue.update(annotation_box=[box[0]/width,box[1]/height,(box[2]-box[0])/width,(box[3]-box[1])/height],annotation_font_size=fitted['font_size'],render_mode='outline',render_issue='译文较长，使用无背景中文注释；原画保留，请预览核对。')
+            mid_x=(box[0]+box[2])/2;mid_y=(box[1]+box[3])/2
+        if cue_style['mode']=='cover' and not fitted.get('annotation'):
             drawing=f"{{\\an7\\pos({left},{top})\\bord0\\shad0\\1c{ass_color(style['background'])}\\p1}}m 0 0 l {right-left} 0 l {right-left} {bottom-top} l 0 {bottom-top}"
             for a,b in visible_intervals(cue):events.append(f'Dialogue: 0,{ass_time(a)},{ass_time(b)},Chinese,,0,0,0,,{drawing}')
-        elif cue_style['mode']=='above':
+        elif cue_style['mode']=='above' and not fitted.get('annotation'):
             text_height=len(fitted['text'].splitlines())*fitted['font_size']*1.3
             mid_y=round(max(text_height/2+3,min(height-text_height/2-3,top-text_height/2-4)))
         text=f"{{\\an5\\pos({mid_x},{mid_y})\\fs{fitted['font_size']}\\q2}}"+ass_text(fitted['text'])
@@ -486,6 +522,7 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 
 
 def export_dynamic_srt(project,output,bilingual=False):
+    prepare_presentation(project)
     output=Path(output)
     if output.exists():raise ValueError('输出已存在，请选择新文件名。')
     rows=[]
