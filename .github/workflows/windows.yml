@@ -2,7 +2,7 @@ name: Windows build and acceptance
 on:
   workflow_dispatch:
   push:
-    branches: [codex/windows-port]
+    branches: [codex/windows-port, codex/recognition-quality]
 permissions:
   contents: read
 concurrency:

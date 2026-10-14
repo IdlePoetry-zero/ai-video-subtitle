@@ -73,6 +73,8 @@ def local_repair_filters(data, start=None, end=None):
     groups = {}
     lo, hi = max(0, start or 0), min(meta['duration'], end if end is not None else meta['duration'])
     for cue in data['cues']:
+        if cue.get('render_mode') == 'outline':
+            continue
         if data.get('recognition_mode') == 'dynamic':
             from worker.dynamic import eligible
             if not eligible(cue):

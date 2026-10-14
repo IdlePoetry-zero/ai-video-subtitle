@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from difflib import SequenceMatcher
+import base64
 import hashlib
 import json
 import math
@@ -16,17 +17,34 @@ from PIL import Image, ImageFont
 from worker.core import (VisionOCR, Cancelled, frames, crop, probe, file_fingerprint,
                          normalize, validate_roi, ass_color, ass_text, ass_time, srt_time)
 from worker.progressive import new_event, relation
-from worker.quality import quality_record, quality_cue, best_supported, similar, plausible_growth
+from worker.quality import quality_record, quality_cue, best_supported, similar, plausible_growth, literal_reference, reference_start
 from worker.appearance import pixel_box
 
 MODE = 'dynamic'
 from worker.platform_runtime import rapid_ocr, ocr_identity, chinese_font
 
-VERSION = 'dynamic-v1' + ('-' + ocr_identity() if rapid_ocr() else '')
+VERSION = 'dynamic-v2.3' + ('-' + ocr_identity() if rapid_ocr() else '')
 INTERVAL = .1
 DISCOVERY_INTERVAL = .2
 MISS_GRACE = .16
-DEFAULTS = {'exclusions': []}
+DEFAULTS = {'exclusions': [], 'profile': 'legacy', 'review_regions': []}
+
+
+def search_region(track):
+    """Search the candidate sentence too; these bounds never become cover bounds."""
+    boxes = [track['box']]
+    if track.get('pending'):
+        boxes.append(track['pending']['box'])
+    box = union(boxes)
+    return expanded(box, max(.012, box[2]*.3), max(.02, box[3]*.4))
+
+
+def mapped_items(result, roi):
+    items = []
+    for item in result.get('items', []):
+        x, y, w, h = item['box']
+        items.append({**item, '_resolution':1., 'box': [roi[0]+x*roi[2], roi[1]+y*roi[3], w*roi[2], h*roi[3]]})
+    return items
 
 
 def union(boxes):
@@ -51,15 +69,30 @@ def expanded(box, x=.015, y=.025):
     return bounded([box[0]-x,box[1]-y,box[2]+x*2,box[3]+y*2])
 
 
-def deduplicate(items):
+def deduplicate(items, enhanced=False):
     out=[]
-    for item in sorted(items,key=lambda i:(-i['confidence'],-len(i['text']))):
-        if any(intersection(item['box'],other['box'])/max(1e-9,min(area(item['box']),area(other['box'])))>.78 and (similar(item['text'],other['text']) or relation(item['text'],other['text']) in ('grow','shrink')) for other in out):continue
+    key=(lambda i:(-int(i['confidence']>=.8),-len(normalize(i['text'])),-i.get('_resolution',1.),-i['confidence'])) if enhanced else (lambda i:(-i['confidence'],-len(i['text'])))
+    for item in sorted(items,key=key):
+        duplicated=False
+        for other in out:
+            a,b=item['box'],other['box'];overlap=intersection(a,b);containment=overlap/max(1e-9,min(area(a),area(b)))
+            if enhanced:
+                same_scale=max(a[3],b[3])/max(1e-9,min(a[3],b[3]))<1.6
+                first,second=normalize(item['text']).casefold(),normalize(other['text']).casefold()
+                shorter,longer=sorted([first,second],key=len)
+                fragment=bool(shorter) and (shorter in longer or SequenceMatcher(None,shorter,longer).find_longest_match().size/len(shorter)>.85)
+                # These are competing reads of one physical row in one frame,
+                # not number/negation changes across time. Never concatenate.
+                duplicated=same_scale and (overlap/max(1e-9,area(a)+area(b)-overlap)>.75 or (containment>.88 and fragment))
+            else:
+                duplicated=containment>.78 and (similar(item['text'],other['text']) or relation(item['text'],other['text']) in ('grow','shrink'))
+            if duplicated:break
+        if duplicated:continue
         out.append(item)
     return out
 
 
-def group_items(items, shape, exclusions=()):
+def group_items(items, shape, exclusions=(), enhanced=False):
     """Conservative row/paragraph grouping in physical pixels, never whole-frame text."""
     height,width=shape[:2];kept=[]
     for item in items:
@@ -68,11 +101,12 @@ def group_items(items, shape, exclusions=()):
         if any(b[0]<=x+w/2<=b[0]+b[2] and b[1]<=y+h/2<=b[1]+b[3] for b in exclusions):continue
         kept.append({**item,'text':text,'box':box,'confidence':float(item.get('confidence',0))})
     rows=[]
-    for item in sorted(deduplicate(kept),key=lambda i:(i['box'][1]+i['box'][3]/2,i['box'][0])):
+    for item in sorted(deduplicate(kept,enhanced),key=lambda i:(i['box'][1]+i['box'][3]/2,i['box'][0])):
         b=item['box'];choices=[]
         for index,row in enumerate(rows):
             a=union([i['box'] for i in row]);gap=max(b[0]-a[0]-a[2],a[0]-b[0]-b[2],0)*width
             same_y=abs(a[1]+a[3]/2-b[1]-b[3]/2)*height < min(a[3],b[3])*height*.4
+            if enhanced and max(a[3],b[3])>2*min(a[3],b[3]):same_y=False
             if same_y and gap<=max(5.,min(a[3],b[3])*height*.7):choices.append((gap,index))
         if choices:rows[min(choices)[1]].append(item)
         else:rows.append([item])
@@ -85,6 +119,7 @@ def group_items(items, shape, exclusions=()):
     for line in sorted(lines,key=lambda i:i['box'][1]):
         b=line['box'];choices=[]
         for index,paragraph in enumerate(paragraphs):
+            if enhanced and (reference_start(line['text']) or reference_start(paragraph[-1]['text'])):continue
             a=paragraph[-1]['box'];gap=(b[1]-a[1]-a[3])*height
             overlap=max(0.,min(a[0]+a[2],b[0]+b[2])-max(a[0],b[0]))/max(1e-9,min(a[2],b[2]))
             centered=abs(a[0]+a[2]/2-b[0]-b[2]/2)<=max(.012,min(a[2],b[2])*.22)
@@ -99,11 +134,35 @@ def group_items(items, shape, exclusions=()):
     return groups
 
 
+def presence_pixels(image, box, size=(48,32)):
+    if box[2]*image.shape[1]<16 or box[3]*image.shape[0]<12:return None
+    return np.array(Image.fromarray(crop(image,box)).convert('L').resize(size,Image.Resampling.BILINEAR))
+
+
+def glyph_signature(image, box):
+    pixels=presence_pixels(image,box,(384,64))
+    if pixels is None:return None
+    lo,hi=np.percentile(pixels,[5,95])
+    if hi-lo<45:return None
+    bits=pixels>(lo+hi)/2
+    if not .03<float(bits.mean())<.94:return None
+    return {'bits':base64.b64encode(np.packbits(bits).tobytes()).decode('ascii')}
+
+
+def glyph_matches(known, current):
+    if not known or not current:return False
+    a=np.unpackbits(np.frombuffer(base64.b64decode(known['bits']),dtype=np.uint8))
+    b=np.unpackbits(np.frombuffer(base64.b64decode(current['bits']),dtype=np.uint8))
+    # Whole-patch agreement is dominated by background. Compare foreground
+    # instead: changed digits/negation must not disappear in a large black ROI.
+    return float(np.count_nonzero(a!=b))/max(1,min(np.count_nonzero(a),np.count_nonzero(b)))<.002
+
+
 def capture_presence(image,box,threshold=None):
     # A stationary glyph patch can establish visibility even when a partial
     # word is not readable. It never contributes an OCR text/frame vote.
-    if box[2]*image.shape[1]<16 or box[3]*image.shape[0]<12:return None
-    patch=np.array(Image.fromarray(crop(image,box)).convert('L').resize((48,32),Image.Resampling.BILINEAR))
+    patch=presence_pixels(image,box)
+    if patch is None:return None
     lo,hi=np.percentile(patch,[5,95])
     if hi-lo<45:return None
     threshold=float((lo+hi)/2) if threshold is None else threshold
@@ -112,7 +171,11 @@ def capture_presence(image,box,threshold=None):
     return {'threshold':threshold,'bits':np.packbits(mask).tolist()}
 
 
-def presence_matches(image,track):
+def presence_matches(image,track,strict=False):
+    if strict:
+        known=track.get('strict_presence')
+        if not known or known['text']!=best_supported(track['event']):return False
+        return glyph_matches(known['signature'],glyph_signature(image,known['box']))
     known=track.get('presence')
     if not known:return False
     now=capture_presence(image,track['presence_box'],known['threshold'])
@@ -141,11 +204,48 @@ def make_track(t, group, start=0.):
 
 def record(track,t,group):
     track.update(last_seen=t,missing_since=None,box=union([track['box'],group['box']]))
+    track.update(last_ocr_time=t,last_ocr_text=group['text'])
     quality_record(track['event'],t,{'text':group['text'],'confidence':group['confidence']})
     track['items_by_text'][group['text']]=group['items']
     spans=track['visible_intervals'];left=max(track['event']['start'],t-INTERVAL/2);right=t+INTERVAL/2
     if spans and left<=spans[-1][1]+.001:spans[-1][1]=right
     else:spans.append([left,right])
+
+
+def recover_visibility(track, at, image):
+    """Retroactively fill only short misses with matching glyph pixels and text.
+
+    The missed frame itself must match the newly OCR-confirmed template. Merely
+    seeing the same words on both sides never bridges a real blank/cut.
+    """
+    best=best_supported(track['event'])
+    if not best or track['event']['variants'].get(best,{}).get('count',0)<3:return
+    previous=track.get('strict_presence')
+    items=track['items_by_text'].get(best,[])
+    observed_box=bounded(union([i['box'] for i in items])) if items else list(track['box'])
+    stationary=previous and intersection(previous['box'],observed_box)/max(1e-9,area(previous['box'])+area(observed_box)-intersection(previous['box'],observed_box))>.98
+    box=previous['box'] if stationary and previous['text']==best else observed_box
+    if track.get('last_ocr_time') == at and track.get('last_ocr_text') == best:
+        signature=glyph_signature(image,box)
+        if signature:
+            track['strict_presence']={'box':box,'text':best,'signature':signature}
+            spans=track['visible_intervals']
+            for gap in track.pop('gap_pixels',[]):
+                if gap['text'] != best or at-gap['time']>.31 or intersection(gap['box'],box)/max(1e-9,area(gap['box'])+area(box)-intersection(gap['box'],box))<.98:continue
+                if not glyph_matches(signature,gap.get('signature')):continue
+                spans.append([max(track['event']['start'],gap['time']-INTERVAL/2),gap['time']+INTERVAL/2])
+                track['recovered_visibility_samples']=track.get('recovered_visibility_samples',0)+1
+            merged=[]
+            for left,right in sorted(spans):
+                if merged and left<=merged[-1][1]+.001:merged[-1][1]=max(merged[-1][1],right)
+                else:merged.append([left,right])
+            track['visible_intervals']=merged
+    elif track.get('missing_since') is not None:
+        signature=glyph_signature(image,box)
+        if signature:
+            gaps=track.setdefault('gap_pixels',[])
+            gaps.append({'time':at,'text':best,'box':box,'signature':signature})
+            del gaps[:-3]
 
 
 def finish_track(track,end,display='first'):
@@ -158,21 +258,22 @@ def finish_track(track,end,display='first'):
                original_end=round(last,3),disappeared_at=round(last,3),ignored=False,
                dynamic_verified=bool(cue['complete_supported'] and confidence>=.45 and any(c.isalnum() for c in source)),
                screenshot=selected.get('path',''),screenshot_box=selected.get('box'),detection_items=track['items_by_text'].get(source,[]),
-               evidence_frames=[{'text':text,**entry} for text,entry in track['evidence'].items()],visual_visibility_samples=track.get('visual_visibility_samples',0))
+                    evidence_frames=[{'text':text,**entry} for text,entry in track['evidence'].items()],visual_visibility_samples=track.get('visual_visibility_samples',0),recovered_visibility_samples=track.get('recovered_visibility_samples',0))
     if not cue['dynamic_verified']:cue['recognition_issue']='文字证据不足，保留原画面；请校对并确认事件'
     if track['ambiguity']:cue['recognition_issue']='相邻文字区域的关联不明确，请检查是否属于不同对象'
     return cue
 
 
 class DynamicTracker:
-    def __init__(self,state=None,display='first',start=0.):
+    def __init__(self,state=None,display='first',start=0.,miss_grace=MISS_GRACE):
         self.state=state if state is not None else {'tracks':[]}
         self.display=display;self.start=start
+        self.miss_grace=miss_grace
 
     def observe(self,t,groups,present_ids=()):
         out=[];tracks=self.state['tracks'];alive=[]
         for track in tracks:
-            if track['missing_since'] is not None and t-track['missing_since']>=MISS_GRACE-1e-6:
+            if track['missing_since'] is not None and t-track['missing_since']>=self.miss_grace-1e-6:
                 for current in [track,track.get('pending')]:
                     if current:
                         cue=finish_track(current,track['missing_since'],self.display)
@@ -255,30 +356,57 @@ def scan_dynamic(project,emit=lambda value:None,cancel=None,start=0.,end=None,fo
         if any(c.get('manual') and overlaps(c) for c in data['cues']):raise ValueError('该时间段含人工校对事件，请缩小范围或创建新项目。')
         data['cues']=[c for c in data['cues'] if not overlaps(c)]
         checkpoint={'key':key,'cursor':start-.0001,'status':'running','calls':0,'tracker':{'tracks':[]},'last_discovery':-999.,'mode':MODE,'version':VERSION,'unreadable_samples':0};data['scan']=checkpoint;project.save(history=True)
-    tracker=DynamicTracker(checkpoint['tracker'],data.get('progressive',{}).get('display','first'),start)
+    tracker=DynamicTracker(checkpoint['tracker'],data.get('progressive',{}).get('display','first'),start, .35 if config['profile']=='enhanced' else MISS_GRACE)
     ocr=VisionOCR();started=saved=time.monotonic()
     try:
         if data['language'] not in ocr.request({'operation':'languages'})['languages']:raise ValueError('系统 OCR 不支持所选语言。')
         for at,image in frames(meta['path'],checkpoint['cursor']+.0001,end,INTERVAL,meta):
             if cancel.is_set():raise Cancelled()
             items=[]
-            if at-checkpoint.get('last_discovery',-999)>=DISCOVERY_INTERVAL-.0001 or not tracker.state['tracks']:
+            enhanced = config['profile'] == 'enhanced'
+            discovery_interval = INTERVAL if enhanced else DISCOVERY_INTERVAL
+            discovered = at-checkpoint.get('last_discovery',-999)>=discovery_interval-.0001 or not tracker.state['tracks']
+            if discovered:
                 scale=min(1.,1280/image.shape[1]);small=np.array(Image.fromarray(image).resize((round(image.shape[1]*scale),round(image.shape[0]*scale)),Image.Resampling.LANCZOS)) if scale<1 else image
-                result=ocr.recognize(small,data['language']);items=result['items'];checkpoint['last_discovery']=at
+                result=ocr.recognize(small,data['language']);items=[{**item,'_resolution':scale} for item in result['items']];checkpoint['last_discovery']=at
                 checkpoint['unreadable_samples']+=int(bool(result.get('unreadable')))
-            else:
-                for track in tracker.state['tracks']:
-                    roi=expanded(track['box'],max(.012,track['box'][2]*.3),max(.02,track['box'][3]*.4))
+            if enhanced or not discovered:
+                rois = []
+                global_groups=group_items(items,image.shape,config['exclusions'],True) if enhanced else []
+                tracks=sorted(tracker.state['tracks'],key=lambda t:(bool(t.get('pending')),len(normalize(best_supported(t['event']) or t['event']['current']))),reverse=True) if enhanced else tracker.state['tracks']
+                for track in tracks:
+                    roi=search_region(track) if enhanced else expanded(track['box'],max(.012,track['box'][2]*.3),max(.02,track['box'][3]*.4))
                     if roi[2]*image.shape[1]<16 or roi[3]*image.shape[0]<12:continue
+                    # Recheck readable stationary paragraphs, not every tiny animated word.
+                    if enhanced and len(normalize(best_supported(track['event']) or track['event']['current'])) < 10 and not track.get('pending'):
+                        continue
+                    if enhanced:
+                        best=best_supported(track['event']) or track['event']['current']
+                        if not track.get('pending') and any(g['text']==best and association(track,g) is not None for g in global_groups):continue
+                        if any(intersection(roi,region)/max(1e-9,area(roi))>.95 for region in config['review_regions']):continue
+                        if len(rois)>=3:break
+                    rois.append(roi)
+                rois.extend(config['review_regions'] if enhanced else [])
+                unique=[]
+                for roi in rois:
+                    if any(intersection(roi,other)/max(1e-9,area(roi)+area(other)-intersection(roi,other))>.85 for other in unique):continue
+                    unique.append(roi)
+                for roi in unique:
                     result=ocr.recognize(crop(image,roi),data['language'])
-                    for item in result['items']:
-                        x,y,w,h=item['box'];items.append({**item,'box':[roi[0]+x*roi[2],roi[1]+y*roi[3],w*roi[2],h*roi[3]]})
-            groups=group_items(items,image.shape,config['exclusions']);present_ids=[t['id'] for t in tracker.state['tracks'] if presence_matches(image,t)];data['cues'].extend(tracker.observe(at,groups,present_ids))
+                    items.extend(mapped_items(result,roi))
+            groups=group_items(items,image.shape,config['exclusions'],enhanced)
+            if enhanced and at-checkpoint.get('last_coverage',-999)>=.999:
+                audit_lines=[i for i in deduplicate(items,True) if not any(b[0]<=i['box'][0]+i['box'][2]/2<=b[0]+b[2] and b[1]<=i['box'][1]+i['box'][3]/2<=b[1]+b[3] for b in config['exclusions'])]
+                checkpoint.setdefault('coverage_observations',[]).append({'time':at,'groups':[{'text':g['text'],'box':g['box'],'confidence':g['confidence']} for g in audit_lines]})
+                checkpoint['last_coverage']=at
+            present_ids=[t['id'] for t in tracker.state['tracks'] if presence_matches(image,t,enhanced)];data['cues'].extend(tracker.observe(at,groups,present_ids))
             for track in tracker.state['tracks']:
                 for current in [track,track.get('pending')]:
                     if not current:continue
-                    if not current.get('presence'):
+                    if enhanced:recover_visibility(current,at,image)
+                    if not current.get('presence') or (enhanced and best_supported(current['event']) and current.get('presence_text') != best_supported(current['event'])):
                         current['presence_box']=list(current['box']);current['presence']=capture_presence(image,current['presence_box'])
+                        current['presence_text']=best_supported(current['event'])
                     best=best_supported(current['event'])
                     group=next((g for g in groups if g['text']==best and association(current,g) is not None),None)
                     if group and best not in current['evidence']:
@@ -291,7 +419,12 @@ def scan_dynamic(project,emit=lambda value:None,cancel=None,start=0.,end=None,fo
             if time.monotonic()-saved>=.8:
                 checkpoint['calls']+=ocr.calls;ocr.calls=0;data['cues'].sort(key=lambda c:(c['start'],c['box'][1],c['box'][0]));project.save()
                 emit({'stage':'scan','status':'running','time':at,'total':end,'count':len(data['cues']),'objects':[{'id':t['id'],'box':t['box']} for t in tracker.state['tracks']], 'message':f"全画面识别：当前 {len(tracker.state['tracks'])} 个文字对象"});saved=time.monotonic()
-        data['cues'].extend(tracker.finish(end));checkpoint.update(cursor=end,status='complete');data['cues'].sort(key=lambda c:(c['start'],c['box'][1],c['box'][0]));check_dynamic_cues(data['cues'],data['style']);return project.snapshot()
+        data['cues'].extend(tracker.finish(end))
+        if config['profile']=='enhanced':
+            from worker.coverage import finalize_enhanced, audit_observations
+            finalize_enhanced(data['cues'])
+            checkpoint['coverage_report']=audit_observations(data['cues'],checkpoint.get('coverage_observations',[]))
+        checkpoint.update(cursor=end,status='complete');data['cues'].sort(key=lambda c:(c['start'],c['box'][1],c['box'][0]));check_dynamic_cues(data['cues'],data['style']);return project.snapshot()
     except Cancelled:checkpoint['status']='cancelled';raise
     except Exception:checkpoint['status']='failed';raise
     finally:
@@ -337,13 +470,14 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
     for cue in data['cues']:
         if not eligible(cue):continue
         if not cue.get('translation','').strip() or cue.get('translation_status')=='stale':raise ValueError('存在已确认但尚未完成翻译的事件，请先翻译或校对。')
-        fitted=layout(cue,data['meta'],style)
+        cue_style={**style,'mode':cue.get('render_mode',style['mode']) if style['mode']!='above' else 'above'}
+        fitted=layout(cue,data['meta'],cue_style)
         if not fitted['fits']:raise ValueError('译文无法放入字幕框，请调整区域、字号或译文后导出。')
         left,top,right,bottom=fitted['box'];mid_x=(left+right)//2;mid_y=(top+bottom)//2
-        if style['mode']=='cover':
+        if cue_style['mode']=='cover':
             drawing=f"{{\\an7\\pos({left},{top})\\bord0\\shad0\\1c{ass_color(style['background'])}\\p1}}m 0 0 l {right-left} 0 l {right-left} {bottom-top} l 0 {bottom-top}"
             for a,b in visible_intervals(cue):events.append(f'Dialogue: 0,{ass_time(a)},{ass_time(b)},Chinese,,0,0,0,,{drawing}')
-        elif style['mode']=='above':
+        elif cue_style['mode']=='above':
             text_height=len(fitted['text'].splitlines())*fitted['font_size']*1.3
             mid_y=round(max(text_height/2+3,min(height-text_height/2-3,top-text_height/2-4)))
         text=f"{{\\an5\\pos({mid_x},{mid_y})\\fs{fitted['font_size']}\\q2}}"+ass_text(fitted['text'])

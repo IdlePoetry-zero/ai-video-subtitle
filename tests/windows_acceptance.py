@@ -139,14 +139,17 @@ def main():
                      'source':probe(source),'modes':{},'dependencies':rpc.request('dependencies')}
     try:
         assert report['dependencies']['ocr']['engine'].startswith('RapidOCR')
-        for mode in ('standard','progressive','progressive_hq','dynamic'):
-            print('Checking',mode,flush=True)
-            directory=OUT/('中文项目 '+mode)
+        for label in ('standard','progressive','progressive_hq','dynamic','dynamic_legacy'):
+            mode='dynamic' if label=='dynamic_legacy' else label
+            print('Checking',label,flush=True)
+            directory=OUT/('中文项目 '+label)
             rpc.request('create',{'video':str(source),'directory':str(directory)})
             # Auto dialogue layout treats the lower half as body; position the
             # chosen fixed region around the actual caption, as in the UI.
             rpc.request('update',{'changes':{'recognition_mode':mode,'roi':[.03,.72,.93,.16],
                        'translation':{'provider':'api','baseUrl':f'http://127.0.0.1:{server.server_port}/v1','model':'fixture','glossary':''}}})
+            if label=='dynamic_legacy':
+                rpc.request('update',{'changes':{'dynamic':{'exclusions':[]}}})
             if mode=='dynamic':
                 assert rpc.job('scan',{'start':0,'end':12},cancel_at=3)['status']=='cancelled'
                 assert rpc.request('snapshot')['scan']['status']=='cancelled'
@@ -190,10 +193,16 @@ def main():
             finally: verifier.close()
             assert any('\u4e00'<=char<='\u9fff' for char in rendered['text']),rendered
             Image.fromarray(output_frame).save(directory/'中文导出证据.png')
-            report['modes'][mode]={'passed':True,'recognized':[c['source'] for c in selected],
+            report['modes'][label]={'passed':True,'recognized':[c['source'] for c in selected],
                                   'cues':len(cues),'frames':count,'output':str(output),'metadata':metadata,
                                   'rendered_chinese_ocr':rendered['text'],
                                   'cancel_resume':mode=='dynamic'}
+            if label=='dynamic':
+                assert project['dynamic']['profile']=='enhanced'
+                rpc.job('audit',{'start':0,'end':12})
+                coverage=rpc.request('snapshot')['scan']['coverage_report']
+                assert coverage['independent_pass'] and coverage['samples']>=10
+                report['modes'][label]['coverage_audit']={'samples':coverage['samples'],'suspected_gaps':len(coverage['suspected_gaps'])}
             if mode == 'progressive_hq':
                 rpc.request('update', {'changes': {'style': {**project['style'], 'mode': 'delogo', 'coverArea': 'text'}}})
                 repaired = directory / '局部去字预览.mp4'
@@ -215,7 +224,7 @@ def main():
     finally:
         rpc.close();server.shutdown()
         (OUT/'acceptance.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
-    print('Windows four-mode acceptance passed.',flush=True)
+    print('Windows modes and legacy-profile acceptance passed.',flush=True)
 
 
 if __name__=='__main__':main()

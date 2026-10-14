@@ -70,6 +70,9 @@ def start_job(kind, params):
                 result = split_object(p, params["id"], params.get("axis", "x"), params.get("fraction", .5), cancel)
             elif kind == "translate":
                 result = translate(p, progress, cancel, params.get("ids"), params.get("apiKey", ""), params.get("force", False))
+            elif kind == 'audit':
+                from worker.coverage import audit_source
+                result = audit_source(p, progress, cancel, params.get('start',0.), params.get('end'))
             elif kind in ("export", "preview"):
                 result = export_video(p, params["output"], progress, cancel, params.get("start"), params.get("end"))
             elif kind == "recommend":
@@ -103,7 +106,7 @@ def invoke(method, params):
         return {"requested": bool(job and job.is_alive())}
     if method == "snapshot":
         return require_project().snapshot()
-    if method in ("scan", "translate", "review", "export", "preview", "recommend", "proxy", "split_object"):
+    if method in ("scan", "audit", "translate", "review", "export", "preview", "recommend", "proxy", "split_object"):
         return start_job(method, params)
     idle()
     if method == "dependencies":

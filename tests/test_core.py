@@ -182,8 +182,26 @@ def test_cancel_export_removes_partial_and_preserves_original(project, tmp_path)
     size = VIDEO.stat().st_size
     with pytest.raises(Cancelled): export_video(project, output, cancel=cancel)
     assert not output.exists()
-    assert not output.with_name('未完成.partial.mp4').exists()
+    assert not list(output.parent.glob('未完成*.partial.mp4'))
     assert VIDEO.stat().st_size == size
+
+
+def test_export_preserves_variable_frame_count_and_timestamps(tmp_path):
+    source = ROOT / 'artifacts/fixtures/variable-timestamps.mp4'
+    p = Project.create(source, tmp_path / 'vfr-project')
+    try:
+        duration = p.data['meta']['duration']
+        p.data['cues'] = [{'id':'vfr','start':0.,'end':duration,'source':'Timestamp test.',
+                          'translation':'时间戳验证','translation_status':'manual','confidence':1.,
+                          'issues':[],'box':p.data['roi']}]
+        before = [t for t,_ in frames(source, interval=0)]
+        output = tmp_path / 'vfr-output.mp4'
+        export_video(p, output)
+        after = [t for t,_ in frames(output, interval=0)]
+        assert len(after) == len(before)
+        assert after == pytest.approx(before, abs=.002)
+    finally:
+        p.close()
 
 
 def test_file_content_change_invalidates_saved_scan(tmp_path):

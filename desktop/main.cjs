@@ -12,12 +12,13 @@ app.setName(windowsApp ? 'SubtitleStudioWindows' : 'SubtitleStudioProgressive');
 const qualityApp = process.execPath.includes('SubtitleStudioQuality.app') || process.env.STUDIO_QUALITY_APP === '1';
 const dynamicApp = process.execPath.includes('SubtitleStudioDynamic.app') || process.env.STUDIO_DYNAMIC_APP === '1';
 const appearanceApp = process.execPath.includes('SubtitleStudioAppearance.app') || process.env.STUDIO_APPEARANCE_APP === '1';
-const isolatedApp = windowsApp || qualityApp || dynamicApp || appearanceApp;
-app.setPath('userData', process.env.STUDIO_TEST_MODE === '1' && process.env.STUDIO_TEST_USER_DATA || path.join(app.getPath('appData'), windowsApp ? 'SubtitleStudioWindows' : appearanceApp ? 'SubtitleStudioAppearance' : dynamicApp ? 'SubtitleStudioDynamic' : qualityApp ? 'SubtitleStudioQuality' : 'SubtitleStudioProgressive'));
+const recognitionApp = process.execPath.includes('SubtitleStudioRecognition.app') || process.env.STUDIO_RECOGNITION_APP === '1';
+const isolatedApp = windowsApp || qualityApp || dynamicApp || appearanceApp || recognitionApp;
+app.setPath('userData', process.env.STUDIO_TEST_MODE === '1' && process.env.STUDIO_TEST_USER_DATA || path.join(app.getPath('appData'), windowsApp ? 'SubtitleStudioWindows' : recognitionApp ? 'SubtitleStudioRecognition' : appearanceApp ? 'SubtitleStudioAppearance' : dynamicApp ? 'SubtitleStudioDynamic' : qualityApp ? 'SubtitleStudioQuality' : 'SubtitleStudioProgressive'));
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'studio-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 const root = path.resolve(__dirname, '..');
-const methods = new Set(['create', 'open', 'snapshot', 'dependencies', 'update', 'edit', 'undo', 'check', 'frame', 'srt', 'merge', 'split', 'split_object', 'cancel', 'scan', 'translate', 'review', 'export', 'preview', 'recommend', 'proxy', 'relocate']);
+const methods = new Set(['create', 'open', 'snapshot', 'dependencies', 'update', 'edit', 'undo', 'check', 'frame', 'srt', 'merge', 'split', 'split_object', 'cancel', 'scan', 'audit', 'translate', 'review', 'export', 'preview', 'recommend', 'proxy', 'relocate']);
 const pending = new Map();
 const assets = new Map();
 const directories = new Set();

@@ -19,3 +19,6 @@ release-appearance/
 release-windows/
 build-windows/
 :memory:.ses
+
+release-recognition/
+release-windows-recognition/

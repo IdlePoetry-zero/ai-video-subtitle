@@ -23,6 +23,16 @@ MODE = 'progressive_hq'
 DEFAULTS = {'layout': 'auto', 'exclusions': []}
 
 
+def literal_reference(text):
+    """Standalone URL rows are references, not prose to translate or cover."""
+    tokens=text.strip().split()
+    return bool(tokens) and all(bool(re.fullmatch(r'(?:https?[:;/][^\s]*|www\.[^\s]+|t\.me/[^\s]+)',token,re.IGNORECASE)) for token in tokens)
+
+
+def reference_start(text):
+    return bool(re.match(r'^\s*(?:https?[:;/]|www\.|t\.me/)',text,re.IGNORECASE))
+
+
 def protected(text):
     return (re.findall(r'\d+(?:\.\d+)?', text),
             re.findall(r"\b(?:not|no|never|without|can't|don't|won't)\b", text.casefold()))

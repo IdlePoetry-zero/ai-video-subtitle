@@ -112,11 +112,11 @@ def test_cancel_resume_preserves_parallel_active_tracks_and_evidence(tmp_path,mo
   for i,(t,_) in enumerate(rows):
    if start<=t<stop_at:yield t,np.full((720,1280,3),i,dtype=np.uint8)
  monkeypatch.setattr(dynamic,'VisionOCR',OCR);monkeypatch.setattr(dynamic,'frames',pixels);monkeypatch.setattr(dynamic,'DISCOVERY_INTERVAL',0)
- p=Project.create(VIDEO,tmp_path/'resume');p.update({'recognition_mode':'dynamic'})
+ p=Project.create(VIDEO,tmp_path/'resume');p.update({'recognition_mode':'dynamic','dynamic':{'exclusions':[],'profile':'legacy'}})
  with pytest.raises(Cancelled):scan(p,cancel=stop,start=1,end=1.9)
  assert p.data['scan']['status']=='cancelled' and len(p.data['scan']['tracker']['tracks'])==2
  p.close();p=Project(tmp_path/'resume');stop.clear();interrupt[0]=False;scan(p,start=1,end=1.9)
- q=Project.create(VIDEO,tmp_path/'whole');q.update({'recognition_mode':'dynamic'});scan(q,start=1,end=1.9)
+ q=Project.create(VIDEO,tmp_path/'whole');q.update({'recognition_mode':'dynamic','dynamic':{'exclusions':[],'profile':'legacy'}});scan(q,start=1,end=1.9)
  fields=lambda p:[(c['source'],c['start'],c['end'],c['quality_support'],c['visible_intervals']) for c in p.data['cues']]
  assert fields(p)==fields(q) and len(p.data['cues'])==2
  assert all(Path(c['screenshot']).exists() for c in p.data['cues'])

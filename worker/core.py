@@ -27,6 +27,7 @@ from PIL import Image
 
 from worker.platform_runtime import ROOT, LineReader, rapid_ocr, ocr_identity, chinese_font, subprocess_options, external_process, remove_temporary
 from worker.appearance import pixel_box, remember_text_box, local_repair_filters
+from worker.export_lock import exclusive_export
 OCR_VERSION = ocr_identity()
 
 
@@ -83,7 +84,7 @@ class VisionOCR:
 
     def recognize(self, pixels, language="en-US"):
         png = io.BytesIO()
-        Image.fromarray(pixels).save(png, format="PNG")
+        Image.fromarray(pixels).save(png, format="PNG", compress_level=1)
         self.calls += 1
         result = self.request({"image": base64.b64encode(png.getvalue()).decode(), "language": language})
         # Reject OCR hallucinations in nearly uniform/dim background patches.
@@ -232,6 +233,7 @@ class Project:
         self.data = {"version": 1, "id": str(uuid.uuid4()), "meta": meta, "fingerprint": fingerprint,
                      "fingerprint_version": 1, "roi": [.04, .76, .92, .21], "regions": [], "language": "en-US", "cues": [],
                      "scan": {}, "recognition_mode": "standard", "recognition_results": {}, "progressive": {"display": "first"},
+                     "dynamic": {"exclusions": [], "profile": "enhanced", "review_regions": []},
                      "style": {"mode": "cover", "coverArea": "text", "fontSize": 36, "background": "#101820", "color": "#ffffff", "padding": 4, "maxCps": 12, "maxChars": 44, "maxLines": 2},
                      "translation": {"provider": "mock", "baseUrl": "http://localhost:11434", "model": "", "glossary": ""},
                      "task": {"stage": "ready", "status": "idle"}, "outputs": []}
@@ -288,8 +290,15 @@ class Project:
                 validate_roi(changes["roi"])
             if "dynamic" in changes:
                 dynamic = changes["dynamic"]
-                if not isinstance(dynamic, dict) or set(dynamic) != {"exclusions"} or not isinstance(dynamic["exclusions"], list) or len(dynamic["exclusions"]) > 20:
+                if not isinstance(dynamic, dict) or 'exclusions' not in dynamic or set(dynamic)-{'exclusions', 'profile', 'review_regions'} or not isinstance(dynamic['exclusions'], list) or len(dynamic['exclusions']) > 20:
                     raise ValueError("全画面模式排除配置无效。")
+                if dynamic.get('profile', 'legacy') not in ('legacy', 'enhanced'):
+                    raise ValueError('全画面识别质量配置无效。')
+                review_regions = dynamic.get('review_regions', [])
+                if not isinstance(review_regions, list) or len(review_regions) > 10:
+                    raise ValueError('独立复核区域配置无效。')
+                for region in review_regions:
+                    validate_roi(region)
                 for excluded in dynamic["exclusions"]:
                     validate_roi(excluded)
             for region in changes.get("regions", []):
@@ -831,6 +840,7 @@ def export_srt(project, output, bilingual=False):
     return {"path": str(output)}
 
 
+@exclusive_export
 def export_video(project, output, emit=lambda value: None, cancel=None, start=None, end=None):
     cancel = cancel or threading.Event()
     if not project.data["cues"]:
@@ -855,7 +865,7 @@ def export_video(project, output, emit=lambda value: None, cancel=None, start=No
         font_dir.mkdir(exist_ok=True)
         shutil.copyfile(font_path, font_dir / font_path.name)
         font_filter = ":fontsdir=render-fonts"
-    temporary = output.with_name(output.stem + ".partial.mp4")
+    temporary = output.with_name(output.stem + "." + uuid.uuid4().hex + ".partial.mp4")
     # Relative constant filename avoids FFmpeg filter escaping of user-controlled paths.
     video_filters = ['scale=trunc(iw*sar/2)*2:trunc(ih/2)*2', 'setsar=1']
     repair_filters = local_repair_filters(project.data, start, end)
@@ -870,7 +880,7 @@ def export_video(project, output, emit=lambda value: None, cancel=None, start=No
                "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart"]
     if start is not None:
         command.extend(["-ss", str(start), "-t", str(duration)])
-    command.extend(["-progress", "pipe:1", "-nostats", str(temporary)])
+    command.extend(["-fps_mode:v", "passthrough", "-progress", "pipe:1", "-nostats", str(temporary)])
     error_path = project.directory / "export-error.log"
     with error_path.open("w") as error:
         process = external_process(command, cwd=project.directory, stdout=subprocess.PIPE, stderr=error, text=True, encoding='utf-8')
