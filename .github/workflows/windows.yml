@@ -12,6 +12,8 @@ jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 50
+    permissions:
+      contents: write
     env:
       PYTHONUTF8: '1'
       STUDIO_OCR_ENGINE: rapidocr
@@ -77,6 +79,8 @@ jobs:
         run: |
           Get-ChildItem release-windows/*.exe,release-windows/*.zip | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content -Encoding utf8 release-windows/SHA256SUMS.txt
       - name: Upload Windows downloads
+        id: downloads
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: SubtitleStudio-Windows-x64
@@ -86,6 +90,8 @@ jobs:
             release-windows/*.zip
             release-windows/SHA256SUMS.txt
       - name: Upload public verification evidence
+        id: evidence
+        continue-on-error: true
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -95,3 +101,20 @@ jobs:
             artifacts/windows/frozen-acceptance/**
             artifacts/windows/*startup.json*
             build-windows/*.spec
+      - name: Save validated downloads to a draft release when artifact upload fails
+        if: ${{ success() && (steps.downloads.outcome == 'failure' || steps.evidence.outcome == 'failure') }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_SHA: ${{ github.sha }}
+          DRAFT_TAG: recognition-windows-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Compress-Archive -Path artifacts/windows/frozen-acceptance,artifacts/windows/*startup.json*,build-windows/*.spec -DestinationPath release-windows/Windows-verification.zip
+          Get-ChildItem release-windows/*.exe,release-windows/*.zip | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content -Encoding utf8 release-windows/SHA256SUMS.txt
+          $assets = @(Get-ChildItem release-windows/*.exe,release-windows/*.zip,release-windows/SHA256SUMS.txt | ForEach-Object FullName)
+          if ($assets.Count -lt 4) { throw 'Validated installer, portable ZIP, evidence and checksums are required' }
+          gh release create $env:DRAFT_TAG --draft --target $env:BUILD_SHA --title "Windows recognition build $env:BUILD_SHA" --notes 'Validated Windows build. Public generated-fixture evidence is included. This draft preserves existing releases and does not announce a public release.' $assets
+          if ($LASTEXITCODE -ne 0) { throw 'Draft release upload failed' }
+          "Draft download tag: $env:DRAFT_TAG" | Add-Content $env:GITHUB_STEP_SUMMARY
