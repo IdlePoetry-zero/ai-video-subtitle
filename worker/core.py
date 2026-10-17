@@ -233,7 +233,7 @@ class Project:
         self.data = {"version": 1, "id": str(uuid.uuid4()), "meta": meta, "fingerprint": fingerprint,
                      "fingerprint_version": 1, "roi": [.04, .76, .92, .21], "regions": [], "language": "en-US", "cues": [],
                      "scan": {}, "recognition_mode": "standard", "recognition_results": {}, "progressive": {"display": "first"},
-                     "dynamic": {"exclusions": [], "profile": "enhanced", "review_regions": []},
+                     "dynamic": {"exclusions": [], "profile": "enhanced", "review_regions": [], "shards": 2, "interval": .4},
                      "style": {"mode": "cover", "coverArea": "text", "fontSize": 36, "background": "#101820", "color": "#ffffff", "padding": 4, "maxCps": 12, "maxChars": 44, "maxLines": 2},
                      "translation": {"provider": "mock", "baseUrl": "http://localhost:11434", "model": "", "glossary": ""},
                      "task": {"stage": "ready", "status": "idle"}, "outputs": []}
@@ -290,10 +290,14 @@ class Project:
                 validate_roi(changes["roi"])
             if "dynamic" in changes:
                 dynamic = changes["dynamic"]
-                if not isinstance(dynamic, dict) or 'exclusions' not in dynamic or set(dynamic)-{'exclusions', 'profile', 'review_regions'} or not isinstance(dynamic['exclusions'], list) or len(dynamic['exclusions']) > 20:
+                if not isinstance(dynamic, dict) or 'exclusions' not in dynamic or set(dynamic)-{'exclusions', 'profile', 'review_regions', 'shards', 'interval'} or not isinstance(dynamic['exclusions'], list) or len(dynamic['exclusions']) > 20:
                     raise ValueError("全画面模式排除配置无效。")
                 if dynamic.get('profile', 'legacy') not in ('legacy', 'enhanced'):
                     raise ValueError('全画面识别质量配置无效。')
+                if 'shards' in dynamic and (not isinstance(dynamic['shards'], int) or not 1 <= dynamic['shards'] <= 8):
+                    raise ValueError('并行分片数需为 1 到 8 的整数。')
+                if 'interval' in dynamic and (not isinstance(dynamic['interval'], (int, float)) or isinstance(dynamic['interval'], bool) or not .15 <= dynamic['interval'] <= 2):
+                    raise ValueError('扫描间隔需在 0.15 到 2 秒之间。')
                 review_regions = dynamic.get('review_regions', [])
                 if not isinstance(review_regions, list) or len(review_regions) > 10:
                     raise ValueError('独立复核区域配置无效。')

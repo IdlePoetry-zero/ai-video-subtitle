@@ -27,7 +27,7 @@ VERSION = 'dynamic-v2.3' + ('-' + ocr_identity() if rapid_ocr() else '')
 INTERVAL = .1
 DISCOVERY_INTERVAL = .2
 MISS_GRACE = .16
-DEFAULTS = {'exclusions': [], 'profile': 'legacy', 'review_regions': []}
+DEFAULTS = {'exclusions': [], 'profile': 'legacy', 'review_regions': [], 'shards': 1, 'interval': 0}
 
 
 def search_region(track):
@@ -348,6 +348,12 @@ def scan_dynamic(project,emit=lambda value:None,cancel=None,start=0.,end=None,fo
     if not 0<=start<end:raise ValueError('试处理区间无效。')
     config={**DEFAULTS,**data.get('dynamic',{})}
     for box in config['exclusions']:validate_roi(box)
+    import os as _os
+    # Shard-parallel scan: each shard runs this same scan on its own time window
+    # in a child process; the parent merges the events afterwards.
+    if int(config.get('shards') or 1) > 1 and not _os.environ.get('STUDIO_SHARD_CHILD'):
+        from worker.shard import scan_sharded
+        return scan_sharded(project, emit, cancel, start, end, config)
     key=hashlib.sha256(json.dumps([fingerprint,data['language'],VERSION,config,start,end],sort_keys=True).encode()).hexdigest()
     checkpoint=data.get('scan',{});resume=checkpoint.get('key')==key and checkpoint.get('status') in ('running','cancelled','failed') and not force
     if checkpoint.get('key')==key and checkpoint.get('status')=='complete' and not force:
@@ -357,7 +363,10 @@ def scan_dynamic(project,emit=lambda value:None,cancel=None,start=0.,end=None,fo
         if any(c.get('manual') and overlaps(c) for c in data['cues']):raise ValueError('该时间段含人工校对事件，请缩小范围或创建新项目。')
         data['cues']=[c for c in data['cues'] if not overlaps(c)]
         checkpoint={'key':key,'cursor':start-.0001,'status':'running','calls':0,'tracker':{'tracks':[]},'last_discovery':-999.,'mode':MODE,'version':VERSION,'unreadable_samples':0};data['scan']=checkpoint;project.save(history=True)
-    tracker=DynamicTracker(checkpoint['tracker'],data.get('progressive',{}).get('display','first'),start, .35 if config['profile']=='enhanced' else MISS_GRACE)
+    # Optional throughput knobs for long batch jobs; defaults keep the shipped behaviour.
+    scan_gap = float(config.get('interval') or _os.environ.get('STUDIO_DYNAMIC_DISCOVERY') or 0) or (INTERVAL if config['profile']=='enhanced' else DISCOVERY_INTERVAL)
+    scan_width = int(_os.environ.get('STUDIO_DYNAMIC_WIDTH') or 1280)
+    tracker=DynamicTracker(checkpoint['tracker'],data.get('progressive',{}).get('display','first'),start, max(.35 if config['profile']=='enhanced' else MISS_GRACE, scan_gap*1.3))
     ocr=VisionOCR();started=saved=time.monotonic()
     try:
         if data['language'] not in ocr.request({'operation':'languages'})['languages']:raise ValueError('系统 OCR 不支持所选语言。')
@@ -365,13 +374,22 @@ def scan_dynamic(project,emit=lambda value:None,cancel=None,start=0.,end=None,fo
             if cancel.is_set():raise Cancelled()
             items=[]
             enhanced = config['profile'] == 'enhanced'
-            discovery_interval = INTERVAL if enhanced else DISCOVERY_INTERVAL
+            discovery_interval = scan_gap
             discovered = at-checkpoint.get('last_discovery',-999)>=discovery_interval-.0001 or not tracker.state['tracks']
             if discovered:
-                scale=min(1.,1280/image.shape[1]);small=np.array(Image.fromarray(image).resize((round(image.shape[1]*scale),round(image.shape[0]*scale)),Image.Resampling.LANCZOS)) if scale<1 else image
+                scale=min(1.,scan_width/image.shape[1]);small=np.array(Image.fromarray(image).resize((round(image.shape[1]*scale),round(image.shape[0]*scale)),Image.Resampling.LANCZOS)) if scale<1 else image
                 result=ocr.recognize(small,data['language']);items=[{**item,'_resolution':scale} for item in result['items']];checkpoint['last_discovery']=at
                 checkpoint['unreadable_samples']+=int(bool(result.get('unreadable')))
             if enhanced or not discovered:
+                # Long batch jobs can throttle the per-track re-read; discovery still
+                # covers the whole frame every scan_gap seconds.
+                recheck = float(_os.environ.get('STUDIO_DYNAMIC_RECHECK') or 0) or (max(scan_gap, 1.0) if float(config.get('interval') or 0) else 0)
+                run_recheck = ((not discovered) and at - checkpoint.get('last_recheck', -999.) >= recheck) if recheck > 0 else (enhanced or not discovered)
+                if run_recheck and recheck > 0:
+                    checkpoint['last_recheck'] = at
+            else:
+                run_recheck = False
+            if run_recheck:
                 rois = []
                 global_groups=group_items(items,image.shape,config['exclusions'],True) if enhanced else []
                 tracks=sorted(tracker.state['tracks'],key=lambda t:(bool(t.get('pending')),len(normalize(best_supported(t['event']) or t['event']['current']))),reverse=True) if enhanced else tracker.state['tracks']

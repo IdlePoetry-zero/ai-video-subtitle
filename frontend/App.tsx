@@ -130,6 +130,11 @@ export default function App() {
     if (value) { receiveProject(value); setRoi(value.roi); roiRef.current = value.roi; setRegionEditing(false); setMergeId(''); setPreviewUrl(''); setMessage(`已切换到${mode === 'standard' ? '标准' : mode === 'dynamic' ? '全画面字幕' : mode === 'progressive_hq' ? '渐进高质量' : '逐步出现'}模式，另一模式的字幕与校对结果已保留。`); }
   }
   async function saveRegion() { if (!project) return; await update({ roi }); setRegionEditing(false); }
+  async function changeScanSettings(changes: {shards?: number; interval?: number}) {
+    if (!project) return;
+    const dynamic = project.dynamic || {exclusions: [], profile: 'legacy' as const, review_regions: []};
+    await update({ dynamic: { ...dynamic, exclusions: dynamic.exclusions || [], review_regions: dynamic.review_regions || [], shards: changes.shards ?? dynamic.shards ?? 2, interval: changes.interval ?? dynamic.interval ?? .4 } });
+  }
   async function scanVideo(sample = false, force = false) {
     if (!project) return;
     if (isDynamic) { setRegionEditing(false); await runJob('scan', sample ? {start:sampleStart,end:sampleEnd,force} : {force}); return; }
@@ -291,6 +296,11 @@ export default function App() {
           {project.recognition_mode === 'progressive_hq' && <div className="quality-controls"><label>正文布局<select aria-label="高质量正文布局" disabled={busy} value={project.quality?.layout || 'auto'} onChange={e => update({quality:{layout:e.target.value,exclusions:project.quality?.exclusions || []}})}><option value="auto">自动正文 · 分离名字与选项</option><option value="dialogue">游戏对话 · 识别框下半部正文</option><option value="all">完整区域 · 保留所有文字行</option></select></label><p>自动布局按位置关系分离正文，并适应字幕移到识别框上部。严格下半部预设适合固定对话框；混排不清时请框选或排除。</p><button disabled={busy || !regionEditing} onClick={() => update({quality:{layout:project.quality?.layout || 'auto',exclusions:[...(project.quality?.exclusions || []),roi]}})}>将当前框加入排除区域</button><button disabled={busy || !project.quality?.exclusions.length} onClick={() => update({quality:{layout:project.quality?.layout || 'auto',exclusions:[]}})}>清空排除区域（{project.quality?.exclusions.length || 0}）</button><p>排除区域独立保存；框选后加入排除，再恢复正文识别框。</p></div>}
           {isDynamic && <div className="dynamic-controls">
             <label>全画面识别质量<select aria-label="全画面识别质量" disabled={busy} value={project.dynamic?.profile || 'legacy'} onChange={e=>update({dynamic:{...project.dynamic,exclusions:project.dynamic?.exclusions||[],profile:e.target.value}})}><option value="legacy">兼容识别</option><option value="enhanced">增强识别 · 长句与短时漏显复核</option></select></label>
+            <div className="scan-tuning">
+              <label>并行分片 n<input aria-label="并行分片数" disabled={busy} type="number" min="1" max="8" step="1" value={project.dynamic?.shards ?? 2} onChange={e => changeScanSettings({shards: Math.max(1, Math.min(8, Math.round(+e.target.value || 1)))})}/></label>
+              <label>扫描间隔 m（秒）<input aria-label="扫描间隔" disabled={busy} type="number" min=".15" max="2" step=".05" value={project.dynamic?.interval ?? .4} onChange={e => changeScanSettings({interval: Math.max(.15, Math.min(2, +e.target.value || .4))})}/></label>
+              <small>分片 n 越大越快（1–8，建议 2–4，每片多占一个 CPU 核）；间隔 m 越大越快，但短于 m 的闪句可能漏掉。</small>
+            </div>
             <p>增强识别同时复核全画面和已发现的字幕对象，速度较慢；短暂失联只有在文字和画面证据一致时才补回。字幕搜索范围与画面遮盖范围独立。</p>
             <button disabled={busy||!regionEditing||project.dynamic?.profile!=='enhanced'} onClick={async()=>{await update({dynamic:{...project.dynamic,exclusions:project.dynamic?.exclusions||[],review_regions:[...(project.dynamic?.review_regions||[]),roi]}});setRegionEditing(false);}}>将当前框加入独立复核区域</button>
             <button disabled={busy||!project.dynamic?.review_regions?.length} onClick={()=>update({dynamic:{...project.dynamic,exclusions:project.dynamic?.exclusions||[],review_regions:[]}})}>清空复核区域（{project.dynamic?.review_regions?.length||0}）</button>
