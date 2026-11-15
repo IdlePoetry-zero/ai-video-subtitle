@@ -60,6 +60,7 @@ def main():
             raise SystemExit('标准模式需要 --roi（可用 probe.py 得到建议值）')
         changes['roi'] = [float(part) for part in args.roi.split(',')]
         changes['style'] = STANDARD_STYLE
+        changes['scan_options'] = {'shards': max(1, min(8, args.shards))}
     else:
         changes['recognition_mode'] = 'dynamic'
         changes['dynamic'] = {'exclusions': [], 'profile': args.profile, 'review_regions': [],

@@ -9,6 +9,7 @@ collapses the duplicated reads.
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import sqlite3
@@ -25,6 +26,7 @@ from worker.platform_runtime import ROOT, subprocess_options
 
 OVERLAP = 2.5
 POLL = 1.0
+FRAME_STEP = .1
 
 
 def _norm(text):
@@ -52,7 +54,12 @@ def _ranges(start, end, count):
     for index in range(count):
         left = start + index * span
         right = end if index == count - 1 else start + (index + 1) * span
-        windows.append([max(start, left - (OVERLAP if index else 0.0)), right])
+        left = max(start, left - (OVERLAP if index else 0.0))
+        if index:
+            # Keep every shard on the same 0.1 s sampling grid as a single full scan,
+            # so splitting the timeline cannot shift cue boundaries.
+            left = max(start, math.floor(left / FRAME_STEP + 1e-9) * FRAME_STEP)
+        windows.append([left, right])
     return windows
 
 
@@ -64,6 +71,7 @@ def _reset_copy(source, folder, interval):
     child.data['cues'] = []
     child.data['scan'] = {}
     child.data['dynamic'] = {**child.data.get('dynamic', {}), 'shards': 1, 'interval': interval}
+    child.data['scan_options'] = {**child.data.get('scan_options', {}), 'shards': 1}
     child.data['task'] = {'stage': 'scan', 'status': 'running'}
     child.data['outputs'] = []
     child.save()
@@ -133,11 +141,15 @@ def _move_evidence(cues, target_directory):
 
 
 def scan_sharded(project, emit=lambda value: None, cancel=None, start=0., end=None, config=None):
-    from worker.core import Cancelled as _Cancelled
-    from worker.dynamic import MODE, VERSION
+    from worker.core import Cancelled as _Cancelled, OCR_VERSION
     cancel = cancel or threading.Event()
     data = project.data
     config = config or {}
+    mode = data.get('recognition_mode', 'standard')
+    if mode == 'dynamic':
+        from worker.dynamic import MODE as scan_mode, VERSION as scan_version
+    else:
+        scan_mode, scan_version = mode, OCR_VERSION
     count = max(1, min(8, int(config.get('shards') or 1)))
     duration = data['meta']['duration']
     end = min(duration, end if end is not None else duration)
@@ -152,7 +164,7 @@ def scan_sharded(project, emit=lambda value: None, cancel=None, start=0., end=No
     base = project.directory / 'shards'
     shutil.rmtree(base, ignore_errors=True)
     data['scan'] = {'status': 'running', 'cursor': start, 'calls': 0, 'shards': count,
-                    'mode': MODE, 'version': VERSION, 'started': time.time()}
+                    'mode': scan_mode, 'version': scan_version, 'started': time.time()}
     data['task'] = {'stage': 'scan', 'status': 'running'}
     project.save(history=True)
 
@@ -192,8 +204,12 @@ def scan_sharded(project, emit=lambda value: None, cancel=None, start=0., end=No
         data['cues'].sort(key=lambda cue: (cue['start'], cue['box'][1], cue['box'][0]))
         data['scan'].update(status='complete', cursor=end, shards=count,
                             calls=sum(_calls(folder) for folder in folders))
-        from worker.dynamic import check_dynamic_cues
-        check_dynamic_cues(data['cues'], data['style'])
+        if mode == 'dynamic':
+            from worker.dynamic import check_dynamic_cues
+            check_dynamic_cues(data['cues'], data['style'])
+        else:
+            from worker.core import check_cues
+            check_cues(data['cues'], data['style'], data.get('translation', {}).get('glossary', ''))
         project.save()
         return project.snapshot()
     except Cancelled:

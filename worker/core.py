@@ -234,6 +234,7 @@ class Project:
                      "fingerprint_version": 1, "roi": [.04, .76, .92, .21], "regions": [], "language": "en-US", "cues": [],
                      "scan": {}, "recognition_mode": "standard", "recognition_results": {}, "progressive": {"display": "first"},
                      "dynamic": {"exclusions": [], "profile": "enhanced", "review_regions": [], "shards": 2, "interval": .4},
+                     "scan_options": {"shards": 1},
                      "style": {"mode": "cover", "coverArea": "text", "fontSize": 36, "background": "#101820", "color": "#ffffff", "padding": 4, "maxCps": 12, "maxChars": 44, "maxLines": 2},
                      "translation": {"provider": "mock", "baseUrl": "http://localhost:11434", "model": "", "glossary": ""},
                      "task": {"stage": "ready", "status": "idle"}, "outputs": []}
@@ -274,8 +275,14 @@ class Project:
     def update(self, changes):
         with self.lock:
             for key in changes:
-                if key not in ("roi", "regions", "language", "style", "translation", "recognition_mode", "progressive", "quality", "dynamic"):
+                if key not in ("roi", "regions", "language", "style", "translation", "recognition_mode", "progressive", "quality", "dynamic", "scan_options"):
                     raise ValueError("不允许修改该项目字段。")
+            if "scan_options" in changes:
+                options = changes["scan_options"]
+                if not isinstance(options, dict) or set(options) - {"shards"}:
+                    raise ValueError("分片扫描配置无效。")
+                if "shards" in options and (not isinstance(options["shards"], int) or isinstance(options["shards"], bool) or not 1 <= options["shards"] <= 8):
+                    raise ValueError("并行分片数需为 1 到 8 的整数。")
             if "recognition_mode" in changes and changes["recognition_mode"] not in ("standard", "progressive", "progressive_hq", "dynamic"):
                 raise ValueError("字幕识别模式无效。")
             if "progressive" in changes and (set(changes["progressive"]) != {"display"} or changes["progressive"]["display"] not in ("first", "complete")):
@@ -405,6 +412,11 @@ def scan(project, emit=lambda value: None, cancel=None, start=0., end=None, forc
 def scan_standard(project, emit=lambda value: None, cancel=None, start=0., end=None, force=False):
     cancel = cancel or threading.Event()
     data = project.data
+    # Optional shard-parallel run: same parameters, the timeline is just split.
+    shards = int((data.get('scan_options') or {}).get('shards') or 1)
+    if shards > 1 and not os.environ.get('STUDIO_SHARD_CHILD'):
+        from worker.shard import scan_sharded
+        return scan_sharded(project, emit, cancel, start, end, {'shards': shards})
     meta = probe(data["meta"]["path"])
     fingerprint = file_fingerprint(meta["path"])
     if data.get("fingerprint_version") == 1 and fingerprint != data["fingerprint"]:
@@ -700,31 +712,57 @@ def translate(project, emit=lambda value: None, cancel=None, ids=None, key="", f
     if project.data.get("recognition_mode") == "dynamic":
         from worker.dynamic import eligible
         targets = [cue for cue in targets if eligible(cue)]
+    # Batches are independent (each carries its own context window), so they can be
+    # requested concurrently.  The batch content is unchanged, so the model sees
+    # exactly the same prompts it would in a sequential run.
+    workers = max(1, min(6, int(os.environ.get("STUDIO_TRANSLATE_WORKERS") or 3)))
+    batches = []
     for offset in range(0, len(targets), 8):
-        if cancel.is_set():
-            raise Cancelled()
         batch = targets[offset:offset + 8]
         context_start = max(0, cues.index(batch[0]) - 3)
         context_end = min(len(cues), cues.index(batch[-1]) + 4)
+        batches.append((offset, batch, cues[context_start:context_end]))
+
+    def run_batch(item):
+        offset, batch, context = item
         result = None
         for attempt in range(3):
             if cancel.is_set():
                 raise Cancelled()
             try:
-                result = cancellable_translation(config, batch, cues[context_start:context_end], key, cancel)
+                result = cancellable_translation(config, batch, context, key, cancel)
                 break
             except (ValueError, KeyError, json.JSONDecodeError):
                 if attempt == 2:
                     raise
-        if cancel.is_set():
-            raise Cancelled()
-        for cue in batch:
-            cue["translation"] = result[cue["id"]]
-            cue["translation_status"] = "mock" if config["provider"] == "mock" else "translated"
-        check_cues(cues, project.data["style"], config.get("glossary", ""))
-        project.save()
-        emit({"stage": "translate", "status": "running", "count": min(offset + 8, len(targets)), "total": len(targets),
-              "message": "正在生成模拟译文（未调用模型）" if config["provider"] == "mock" else "正在翻译字幕"})
+        return offset, batch, result
+
+    skipped = min(8, len(targets))
+    if not batches:
+        return project.snapshot()
+    completed = 0
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    pool = ThreadPoolExecutor(max_workers=min(workers, len(batches)))
+    try:
+        futures = [pool.submit(run_batch, item) for item in batches]
+        for future in as_completed(futures):
+            offset, batch, result = future.result()
+            for cue in batch:
+                cue["translation"] = result[cue["id"]]
+                cue["translation_status"] = "mock" if config["provider"] == "mock" else "translated"
+            check_cues(cues, project.data["style"], config.get("glossary", ""))
+            project.save()
+            completed = min(len(targets), completed + len(batch))
+            emit({"stage": "translate", "status": "running", "count": completed, "total": len(targets),
+                  "message": "正在生成模拟译文（未调用模型）" if config["provider"] == "mock" else "正在翻译字幕"})
+    except Cancelled:
+        for future in futures:
+            future.cancel()
+        raise
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+    if cancel.is_set():
+        raise Cancelled()
     return project.snapshot()
 
 
@@ -880,8 +918,14 @@ def export_video(project, output, emit=lambda value: None, cancel=None, start=No
         video_filters.extend(repair_filters)
     video_filters.append('ass=render.ass' + font_filter)
     (project.directory / 'render-filter.txt').write_text(','.join(video_filters), encoding='utf-8')
+    # CPU encoding is the reference path; the GPU encoder is opt-in and must be
+    # validated against it (same filter chain, different bitstream).
+    if os.environ.get('STUDIO_EXPORT_ENCODER') == 'nvenc':
+        video_codec = ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", "21", "-b:v", "0", "-pix_fmt", "yuv420p"]
+    else:
+        video_codec = ["-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p"]
     command = [ffmpeg_path(), "-hide_banner", "-nostdin", "-y", "-i", project.data["meta"]["path"], "-filter_script:v", 'render-filter.txt',
-               "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart"]
+               "-map", "0:v:0", "-map", "0:a:0?", *video_codec, "-c:a", "aac", "-movflags", "+faststart"]
     if start is not None:
         command.extend(["-ss", str(start), "-t", str(duration)])
     command.extend(["-fps_mode:v", "passthrough", "-progress", "pipe:1", "-nostats", str(temporary)])
